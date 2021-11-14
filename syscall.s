@@ -17,6 +17,7 @@ RISCV_BREAK = $07F4
 .bss
 
 RISCV_break: .res 4
+RISCV_min_break: .res 4
 
 ; Address and size for I/O
 io_addr: .res 4
@@ -62,12 +63,16 @@ local_addr: .res 2
     ; Set the break
     lda RISCV_BREAK+0
     sta RISCV_break+0
+    sta RISCV_min_break+0
     lda RISCV_BREAK+1
     sta RISCV_break+1
+    sta RISCV_min_break+1
     lda RISCV_BREAK+2
     sta RISCV_break+2
+    sta RISCV_min_break+2
     lda #1
     sta RISCV_break+3
+    sta RISCV_min_break+3
 
     rts
 
@@ -75,7 +80,36 @@ local_addr: .res 2
 
 ; SYS_faccessat    = bad_ecall
 ; SYS_openat       = bad_ecall
-; SYS_close        = bad_ecall
+
+; Close the given file handle
+; A0 = file handle
+.global SYS_close
+.proc SYS_close
+
+    ; Ignore any attempt to close file 0, 1 or 2
+    lda _RISCV_ireg_1+REG_a0
+    ora _RISCV_ireg_2+REG_a0
+    ora _RISCV_ireg_3+REG_a0
+    bne close_file
+    lda _RISCV_ireg_0+REG_a0
+    cmp #3
+    bcs close_file
+
+        lda #0
+        sta _RISCV_ireg_0+REG_a0
+        sta _RISCV_ireg_1+REG_a0
+        sta _RISCV_ireg_2+REG_a0
+        sta _RISCV_ireg_3+REG_a0
+        rts
+
+    close_file:
+
+    ; File I/O not yet implemented
+    set_errno EBADF
+    rts
+
+.endproc
+
 ; SYS_lseek        = bad_ecall
 ; SYS_read         = bad_ecall
 
@@ -241,7 +275,86 @@ local_addr: .res 2
 .endproc
 
 ; SYS_gettimeofday = bad_ecall
-; SYS_brk          = bad_ecall
+
+.global SYS_brk
+.proc SYS_brk
+
+    ; If A0 == 0, query the current break; this always succeeds
+    lda _RISCV_ireg_0+REG_a0
+    ora _RISCV_ireg_1+REG_a0
+    ora _RISCV_ireg_2+REG_a0
+    ora _RISCV_ireg_3+REG_a0
+    bne set_break
+
+        lda RISCV_break+0
+        sta _RISCV_ireg_0+REG_a0
+        lda RISCV_break+1
+        sta _RISCV_ireg_1+REG_a0
+        lda RISCV_break+2
+        sta _RISCV_ireg_2+REG_a0
+        lda RISCV_break+3
+        sta _RISCV_ireg_3+REG_a0
+        rts
+
+    set_break:
+
+    ; A0 != 0 sets a new break
+    ; The new break must be in space 1 (the REU)
+    lda _RISCV_ireg_3+REG_a0
+    cmp #1
+    bne error
+
+    ; The new break must not be less than the initial break
+    lda _RISCV_ireg_0+REG_a0
+    cmp RISCV_min_break+0
+    lda _RISCV_ireg_1+REG_a0
+    sbc RISCV_min_break+1
+    lda _RISCV_ireg_2+REG_a0
+    sbc RISCV_min_break+2
+    lda _RISCV_ireg_3+REG_a0
+    sbc RISCV_min_break+3
+    bcc error
+
+    ; The new break must be less than the current stack pointer
+    lda _RISCV_ireg_0+REG_a0
+    cmp _RISCV_ireg_0+REG_sp
+    lda _RISCV_ireg_1+REG_a0
+    sbc _RISCV_ireg_1+REG_sp
+    lda _RISCV_ireg_2+REG_a0
+    sbc _RISCV_ireg_2+REG_sp
+    lda _RISCV_ireg_3+REG_a0
+    sbc _RISCV_ireg_3+REG_sp
+    bcs error
+
+    ; Set the new break and return the current break
+    lda _RISCV_ireg_0+REG_a0
+    ldx RISCV_break+0
+    stx _RISCV_ireg_0+REG_a0
+    sta RISCV_break+0
+    lda _RISCV_ireg_1+REG_a0
+    ldx RISCV_break+1
+    stx _RISCV_ireg_1+REG_a0
+    sta RISCV_break+1
+    lda _RISCV_ireg_2+REG_a0
+    ldx RISCV_break+2
+    stx _RISCV_ireg_2+REG_a0
+    sta RISCV_break+2
+    lda _RISCV_ireg_3+REG_a0
+    ldx RISCV_break+3
+    stx _RISCV_ireg_3+REG_a0
+    sta RISCV_break+3
+    rts
+
+error:
+    lda #$FF
+    sta _RISCV_ireg_0+REG_a0
+    sta _RISCV_ireg_1+REG_a0
+    sta _RISCV_ireg_2+REG_a0
+    sta _RISCV_ireg_3+REG_a0
+    rts
+
+.endproc
+
 ; SYS_open         = bad_ecall
 ; SYS_link         = bad_ecall
 ; SYS_unlink       = bad_ecall
