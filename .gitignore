@@ -1,0 +1,10 @@
+.sw[a-z]
+.*.sw[a-z]
+*.o
+chain-prg.c
+chain.bin
+hello
+*.d64
+*.map
+*.prg
+*.lst

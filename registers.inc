@@ -1,0 +1,33 @@
+; Give the RISC-V registers their symbolic names
+
+REG_ra  =  1
+REG_sp  =  2
+REG_gp  =  3
+REG_tp  =  4
+REG_t0  =  5
+REG_t1  =  6
+REG_t2  =  7
+REG_fp  =  8
+REG_s1  =  9
+REG_a0  = 10
+REG_a1  = 11
+REG_a2  = 12
+REG_a3  = 13
+REG_a4  = 14
+REG_a5  = 15
+REG_a6  = 16
+REG_a7  = 17
+REG_s2  = 18
+REG_s3  = 19
+REG_s4  = 20
+REG_s5  = 21
+REG_s6  = 22
+REG_s7  = 23
+REG_s8  = 24
+REG_s9  = 25
+REG_s10 = 26
+REG_s11 = 27
+REG_t3  = 28
+REG_t4  = 29
+REG_t5  = 30
+REG_t6  = 31
