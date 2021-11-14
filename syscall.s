@@ -12,6 +12,7 @@ RISCV_BREAK = $07F4
 .import _RISCV_ireg_1
 .import _RISCV_ireg_2
 .import _RISCV_ireg_3
+.importzp RISCV_fence
 
 .bss
 
@@ -21,9 +22,31 @@ RISCV_break: .res 4
 io_addr: .res 4
 io_size: .res 4
 
+; Structure for stat, fstat, lstat, fstatat
+; Matches Newlib libgloss/riscv/kernel_stat.h
+.struct kernel_stat
+    st_dev     .dword 2
+    st_ino     .dword 2
+    st_mode    .dword
+    st_nlink   .dword
+    st_uid     .dword
+    st_gid     .dword
+    st_rdev    .dword 2
+    __pad1     .dword 2
+    st_size    .dword 2
+    st_blksize .dword
+    __pad2     .dword
+    st_blocks  .dword 2
+    st_atim    .dword 4 ; 8 bytes: tv_sec; 4 bytes: tv_nsec; 4 bytes: pad
+    st_mtim    .dword 4
+    st_ctim    .dword 4
+    __pad3     .dword 2
+.endstruct
+kernel_stat_size = 128
+
 ; Transfer area for I/O
 xfer_size = 16
-io_xfer: .res xfer_size
+io_xfer: .res kernel_stat_size
 
 .segment "ZEROPAGE"
 io_count: .res 1
@@ -83,6 +106,7 @@ local_addr: .res 2
     sta io_size+3
     jsr check_read
     bcc read_ok
+        set_errno EFAULT
         rts
     read_ok:
 
@@ -135,7 +159,87 @@ local_addr: .res 2
 .endproc
 
 ; SYS_fstatat      = bad_ecall
-; SYS_fstat        = bad_ecall
+
+; Return information about an open file handle
+; A0 = file handle
+; A1 = address of stat structure
+;      This is struct kernel_stat in Newlib libgloss/riscv/kernel_stat.h
+.global SYS_fstat
+.proc SYS_fstat
+
+    ; Set up the transfer area
+    lda _RISCV_ireg_0+REG_a1
+    sta io_addr+0
+    lda _RISCV_ireg_1+REG_a1
+    sta io_addr+1
+    lda _RISCV_ireg_2+REG_a1
+    sta io_addr+2
+    lda _RISCV_ireg_3+REG_a1
+    sta io_addr+3
+    lda #kernel_stat_size
+    sta io_size+0
+    lda #0
+    sta io_size+1
+    sta io_size+2
+    sta io_size+3
+    jsr check_write
+    bcc write_ok
+        set_errno EFAULT
+        rts
+    write_ok:
+
+    ; Clear the transfer area
+    ldx #kernel_stat_size
+    lda #0
+    clear:
+        sta io_xfer-1,x
+    dex
+    bne clear
+
+    ; Check for special file handles 0, 1 and 2
+    lda _RISCV_ireg_1+REG_a0
+    ora _RISCV_ireg_2+REG_a0
+    ora _RISCV_ireg_3+REG_a0
+    bne check_file
+    lda _RISCV_ireg_0+REG_a0
+    bne check_output
+        ; Handle 0 (standard input)
+        lda #<020444            ; Character device, writable
+        sta io_xfer+kernel_stat::st_mode+0
+        lda #>020444
+        sta io_xfer+kernel_stat::st_mode+1
+        lda #0
+        sta io_xfer+kernel_stat::st_mode+2
+        sta io_xfer+kernel_stat::st_mode+3
+        sta _RISCV_ireg_0+REG_a0
+        sta _RISCV_ireg_1+REG_a0
+        sta _RISCV_ireg_2+REG_a0
+        sta _RISCV_ireg_3+REG_a0
+        jmp write_io_xfer
+    check_output:
+    cmp #3
+    bcs check_file
+        ; Handle 1 (standard output) or 2 (standard error)
+        lda #<020222            ; Character device, readable
+        sta io_xfer+kernel_stat::st_mode+0
+        lda #>020222
+        sta io_xfer+kernel_stat::st_mode+1
+        lda #0
+        sta io_xfer+kernel_stat::st_mode+2
+        sta io_xfer+kernel_stat::st_mode+3
+        sta _RISCV_ireg_0+REG_a0
+        sta _RISCV_ireg_1+REG_a0
+        sta _RISCV_ireg_2+REG_a0
+        sta _RISCV_ireg_3+REG_a0
+        jmp write_io_xfer
+    check_file:
+
+    ; File I/O not yet implemented
+    set_errno EBADF
+    rts
+
+.endproc
+
 ; SYS_gettimeofday = bad_ecall
 ; SYS_brk          = bad_ecall
 ; SYS_open         = bad_ecall
@@ -144,6 +248,20 @@ local_addr: .res 2
 ; SYS_access       = bad_ecall
 ; SYS_stat         = bad_ecall
 ; SYS_lstat        = bad_ecall
+
+; Check the configured address and size for valid write
+; Set C if address and size are invalid
+; Must be placed immediately before check_read so a branch will reach
+.proc check_write
+
+    ; Requirement is the same as check_read, except that the address must also
+    ; be above the fence
+    lda RISCV_fence
+    cmp io_addr+2
+    bcc check_read
+    rts
+
+.endproc
 
 ; Check the configured address and size for valid read
 ; Set C if address and size are invalid
@@ -231,6 +349,17 @@ bad_read:
     sta io_size+2
 
 end_read:
+    rts
+
+.endproc
+
+; Pass the io_xfer area to the RISC-V target
+.proc write_io_xfer
+
+    set_reu_address io_addr
+    set_xfer_size io_size
+    set_local_address io_xfer
+    do_reu_write
     rts
 
 .endproc

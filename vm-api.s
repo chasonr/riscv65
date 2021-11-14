@@ -9,6 +9,7 @@ RISCV_FENCE = $07F3
 .include "reu.inc"
 
 .segment "ZEROPAGE"
+.globalzp RISCV_fence
 RISCV_fence: .res 1
 local_address: .res 2
 
@@ -56,6 +57,11 @@ str_index: .res 1
     ; Set the fence
     lda RISCV_FENCE
     sta RISCV_fence
+
+    ; Set these registers once, rather than every time we fetch, read or write
+    lda #0
+    sta reu_irq_mask
+    sta reu_address_control
 
     rts
 
@@ -1103,7 +1109,10 @@ hexdigit: .byte "0123456789ABCDEF"
 ; Wait for a keypress
 .proc wait_key
 
-    ; This is not needed in the current development environment
+    wait:
+        jsr GETIN
+    cmp #0
+    beq wait
     rts
 
 .endproc
@@ -1513,7 +1522,7 @@ SYS_lseek        = bad_ecall
 SYS_read         = bad_ecall
 .import SYS_write
 SYS_fstatat      = bad_ecall
-SYS_fstat        = bad_ecall
+.import SYS_fstat
 SYS_exit         = _RISCV_exit
 SYS_gettimeofday = bad_ecall
 SYS_brk          = bad_ecall
