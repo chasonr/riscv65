@@ -174,7 +174,6 @@ local_addr: .res 2
             bne @write_byte
         beq @write_loop
         @end_write_loop:
-        rts
         lda _RISCV_ireg_0+REG_a2
         sta _RISCV_ireg_0+REG_a0
         lda _RISCV_ireg_1+REG_a2
