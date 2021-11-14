@@ -4,6 +4,7 @@
 chain-prg.c
 chain.bin
 hello
+riscv-vm
 *.d64
 *.map
 *.prg
