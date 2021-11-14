@@ -29,7 +29,7 @@ syscall.o: syscall.s registers.inc kernal.inc errno.inc reu.inc
 ##############################################################################
 
 riscv-vm: riscv-vm.o 6502emu.o
-	gcc -c -Wall -g riscv-vm.o 6502emu.o -o riscv-vm
+	gcc -Wall -g riscv-vm.o 6502emu.o -o riscv-vm
 
 riscv-vm.o: riscv-vm.c 6502emu.h
 	gcc -c -Wall -g $< -o $@

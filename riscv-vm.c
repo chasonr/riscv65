@@ -74,7 +74,7 @@ VM_init(void)
     emu_init();
 
     /* Read the 6502 code into the emulator's address space */
-    const char *filename = "riscv65";
+    const char *filename = "riscv65.prg";
     FILE *fp = fopen(filename, "rb");
     if (fp == NULL) {
         goto error;
