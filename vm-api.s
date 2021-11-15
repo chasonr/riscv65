@@ -1524,7 +1524,7 @@ SYS_read         = bad_ecall
 SYS_fstatat      = bad_ecall
 .import SYS_fstat
 SYS_exit         = _RISCV_exit
-SYS_gettimeofday = bad_ecall
+.import SYS_gettimeofday
 .import SYS_brk
 SYS_open         = bad_ecall
 SYS_link         = bad_ecall
