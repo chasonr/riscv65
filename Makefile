@@ -1,6 +1,6 @@
 # Makefile for RISCV65 project
 
-all: riscv-vm hello reu-load.d64
+all: riscv-vm hello.prg reu-load.d64
 
 # A D64 image containing reu-load and riscv65
 reu-load.d64: riscv65.prg reu-load.prg
@@ -64,12 +64,12 @@ chain.bin: chain.s
 #                           A sample RISC-V target                           #
 ##############################################################################
 
-hello: hello.c
-	riscv-elf-gcc -Wall -O2 hello.c -o hello
+hello.prg: hello.c
+	riscv-elf-gcc -Wall -O2 hello.c -o hello.prg
 
 ##############################################################################
 
 clean:
-	rm -f *.o riscv65.prg riscv65.map reu-load.prg reu-load.map *.lst riscv-vm hello
+	rm -f *.o riscv65.prg riscv65.map reu-load.prg reu-load.map *.lst riscv-vm hello.prg
 	rm -f chain.o chain.bin chain-prg.c
 	rm -f reu-load.d64
