@@ -1267,9 +1267,7 @@ end_read:
     jsr do_command
     lda io_xfer+256
     cmp #'0'
-    beq @read_ok
-        jmp @bad_fs
-    @read_ok:
+    bne @bad_fs
 
     lda #1
     sta io_xfer+0
@@ -1282,23 +1280,15 @@ end_read:
     ldx #4
     jsr do_command
     cpy #0
-    beq :+
-        jmp @bad_fs
-    :
+    bne @bad_fs
     cpx #128
-    beq :+
-        jmp @bad_fs
-    :
+    bne @bad_fs
 
     ; Determine fs_sector_shift
     lda io_xfer+11  ; sector size, low byte
-    beq :+
-        jmp @bad_fs ; sector size < 256 or not power of two
-    :
+    bne @bad_fs     ; sector size < 256 or not power of two
     lda io_xfer+12  ; sector size, high byte
-    bne :+
-        jmp @bad_fs ; sector size is zero
-    :
+    beq @bad_fs     ; sector size is zero
     ldx #0
     @shift1:
         lsr a
@@ -1307,12 +1297,12 @@ end_read:
     bne @shift1
     @end_shift1:
     cmp #0
-    bne @bad_fs_0   ; sector size is not a power of two
+    bne @bad_fs     ; sector size is not a power of two
     stx fs_sector_shift
 
     ; Determine fs_cluster_shift
     lda io_xfer+13  ; number of sectors per cluster
-    beq @bad_fs_0   ; cluster size is zero
+    beq @bad_fs     ; cluster size is zero
     ; Leave X alone; this count is cumulative with the last one
     @shift2:
         lsr a
@@ -1321,7 +1311,12 @@ end_read:
     bne @shift2
     @end_shift2:
     cmp #0
-    bne @bad_fs_0   ; cluster size is not a power of two
+    beq :+          ; cluster size must be a power of two
+    @bad_fs:        ; placed here so branches will reach
+        lda #0
+        sta fs_type
+        rts
+    :
     stx fs_cluster_shift
 
     ; Determine fs_cluster_size
@@ -1380,9 +1375,7 @@ end_read:
     cmp #1
     beq @one_fat
     cmp #2
-    beq @two_fats
-    @bad_fs_0:
-        jmp @bad_fs
+    bne @bad_fs
     @two_fats:
         ; Two FATs
         clc
@@ -1539,11 +1532,6 @@ end_read:
     sta fs_clusters+3
 
     lda #16
-    sta fs_type
-    rts
-
-@bad_fs:
-    lda #0
     sta fs_type
     rts
 
