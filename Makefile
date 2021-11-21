@@ -22,7 +22,7 @@ vm-api.o: vm-api.s registers.inc memory.inc kernal.inc reu.inc
 	ca65 vm-api.s -o vm-api.o -t c64 -l vm-api.lst
 
 syscall.o: syscall.s registers.inc kernal.inc errno.inc reu.inc
-	ca65 syscall.s -o syscall.o -t c64 -l vm-api.lst
+	ca65 syscall.s -o syscall.o -t c64 -l syscall.lst
 
 ##############################################################################
 #                          riscv-vm, a test program                          #
