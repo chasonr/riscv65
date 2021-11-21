@@ -104,8 +104,11 @@ fs_clusters:      .res 4 ; Number of clusters in file system
 fs_root_dir_size: .res 2 ; Number of entries in root directory
 fs_first_fat:     .res 3 ; 256-byte offset to first FAT
 fs_second_fat:    .res 3 ; 256-byte offset to second FAT; == first_FAT if only one FAT
-fs_root_dir:      .res 3 ; 256-byte offset to root directory
+fs_root_dir:      .res 4 ; 256-byte offset to root directory (FAT12, FAT16)
+                         ; or cluster where root directory starts (FAT32)
 fs_cluster_base:  .res 3 ; Add this to shifted cluster number to get offset to cluster
+fs_ext_flags:     .res 1 ; FAT32 extended flags
+fs_info_sector:   .res 2 ; FAT32 info sector
 
 .segment "ZEROPAGE"
 io_count: .res 1
@@ -163,6 +166,7 @@ DOS_CMD_GET_TIME  = $26
 
     ; Get the file system layout
     jsr init_fs
+    ;jsr dump_fs_params
 
     rts
 
@@ -1253,6 +1257,31 @@ end_read:
 
 .proc init_fs
 
+    .struct boot_record
+        BS_jmpBoot      .byte 3  ;  0 (unused)
+        BS_OEMName      .byte 8  ;  3 (unused)
+        BPB_BytsPerSec  .word 1  ; 11
+        BPB_SecPerClus  .byte 1  ; 13
+        BPB_RsvdSecCnt  .word 1  ; 14
+        BPB_NumFATs     .byte 1  ; 16
+        BPB_RootEntCnt  .word 1  ; 17
+        BPB_TotSec16    .word 1  ; 19
+        BPB_Media       .byte 1  ; 21 (unused)
+        BPB_FATSz16     .word 1  ; 22
+        BPB_SecPerTrk   .word 1  ; 24 (unused)
+        BPB_NumHeads    .word 1  ; 26 (unused)
+        BPB_HiddSec     .dword 1 ; 28
+        BPB_TotSec32    .dword 1 ; 32
+        ; The following are defined only on FAT32
+        BPB_FATSz32     .dword 1 ; 36
+        BPB_ExtFlags    .word 1  ; 40
+        BPB_FSVer       .word 1  ; 42
+        BPB_RootClus    .dword 1 ; 44
+        BPB_FSInfo      .word 1  ; 48 (unused)
+        BPB_BkBootSec   .word 1  ; 50 (unused)
+        BPB_Reserved    .byte 12 ; 52 (unused)
+    .endstruct
+
     ; Read the boot sector from the file system
     lda #1
     sta io_xfer+0
@@ -1284,10 +1313,17 @@ end_read:
     cpx #128
     bne @bad_fs
 
+    ; Partitions are not supported, and so BPB_HiddSec must be zero
+    lda io_xfer+boot_record::BPB_HiddSec+0
+    ora io_xfer+boot_record::BPB_HiddSec+1
+    ora io_xfer+boot_record::BPB_HiddSec+2
+    ora io_xfer+boot_record::BPB_HiddSec+3
+    bne @bad_fs
+
     ; Determine fs_sector_shift
-    lda io_xfer+11  ; sector size, low byte
+    lda io_xfer+boot_record::BPB_BytsPerSec+0
     bne @bad_fs     ; sector size < 256 or not power of two
-    lda io_xfer+12  ; sector size, high byte
+    lda io_xfer+boot_record::BPB_BytsPerSec+1
     beq @bad_fs     ; sector size is zero
     ldx #0
     @shift1:
@@ -1301,7 +1337,7 @@ end_read:
     stx fs_sector_shift
 
     ; Determine fs_cluster_shift
-    lda io_xfer+13  ; number of sectors per cluster
+    lda io_xfer+boot_record::BPB_SecPerClus
     beq @bad_fs     ; cluster size is zero
     ; Leave X alone; this count is cumulative with the last one
     @shift2:
@@ -1320,7 +1356,7 @@ end_read:
     stx fs_cluster_shift
 
     ; Determine fs_cluster_size
-    lda io_xfer+13  ; number of sectors per cluster
+    lda io_xfer+boot_record::BPB_SecPerClus
     sta fs_cluster_size+0
     lda #0
     ldx fs_sector_shift
@@ -1334,9 +1370,9 @@ end_read:
     sta fs_cluster_size+1
 
     ; Determine fs_first_fat
-    lda io_xfer+14  ; number of reserved sectors, low byte
+    lda io_xfer+boot_record::BPB_RsvdSecCnt+0
     sta fs_first_fat+0
-    lda io_xfer+15  ; number of reserved sectors, high byte
+    lda io_xfer+boot_record::BPB_RsvdSecCnt+1
     sta fs_first_fat+1
     lda #0
     ldx fs_sector_shift
@@ -1354,28 +1390,45 @@ end_read:
     ; Stash this in fs_root_dir for the nonce; we'll need it to determine
     ; that position and also fs_second_fat
 
-    lda io_xfer+22      ; sectors per FAT, low byte
-    sta fs_root_dir+0
-    lda io_xfer+23      ; sectors per FAT, high byte
-    sta fs_root_dir+1
     lda #0
+    sta fs_root_dir+2
+    sta fs_root_dir+3
+    lda io_xfer+boot_record::BPB_FATSz16+0
+    sta fs_root_dir+0
+    lda io_xfer+boot_record::BPB_FATSz16+1
+    sta fs_root_dir+1
+    ora fs_root_dir+0
+    bne @got_fat_size
+        ; BPB_FATSz16 is zero; use BPB_FATSz32
+        ; This is possible only on FAT32
+        lda io_xfer+boot_record::BPB_FATSz32+0
+        sta fs_root_dir+0
+        lda io_xfer+boot_record::BPB_FATSz32+1
+        sta fs_root_dir+1
+        lda io_xfer+boot_record::BPB_FATSz32+2
+        sta fs_root_dir+2
+        lda io_xfer+boot_record::BPB_FATSz32+3
+        bne @bad_fs         ; Too large (we won't be able to seek)
+    @got_fat_size:
+    lda fs_root_dir+2
     ldx fs_sector_shift
     beq @end_shift4
     @shift4:
         asl fs_root_dir+0
         rol fs_root_dir+1
         rol a
+        bcs @bad_fs_1       ; Too large
     dex
     bne @shift4
     @end_shift4:
     sta fs_root_dir+2
 
     ; Check the number of FATs and determine fs_second_fat
-    lda io_xfer+16  ; number of FATs
+    lda io_xfer+boot_record::BPB_NumFATs
     cmp #1
     beq @one_fat
     cmp #2
-    bne @bad_fs
+    bne @bad_fs_1
     @two_fats:
         ; Two FATs
         clc
@@ -1388,6 +1441,7 @@ end_read:
         lda fs_first_fat+2
         adc fs_root_dir+2
         sta fs_second_fat+2
+        bcs @bad_fs_1
     jmp @got_fats
     @one_fat:
         ; One FAT
@@ -1410,13 +1464,19 @@ end_read:
     lda fs_root_dir+2
     adc fs_second_fat+2
     sta fs_root_dir+2
+    bcc :+
+    @bad_fs_1:
+        lda #0
+        sta fs_type
+        rts
+    :
 
     ; Determine number of entries in root directory
     ; Save a copy to fs_cluster_base for calculation of that parameter
-    lda io_xfer+17
+    lda io_xfer+boot_record::BPB_RootEntCnt+0
     sta fs_root_dir_size+0
     sta fs_cluster_base+0
-    lda io_xfer+18
+    lda io_xfer+boot_record::BPB_RootEntCnt+1
     sta fs_root_dir_size+1
     sta fs_cluster_base+1
 
@@ -1429,7 +1489,7 @@ end_read:
         ror a
     .endrep
     ; Round up to sector size
-    ldx io_xfer+12  ; sector size, high byte
+    ldx io_xfer+boot_record::BPB_BytsPerSec+1
     dex
     cmp #$01 ; set carry if A != 0
     txa
@@ -1451,6 +1511,7 @@ end_read:
     lda #0
     adc fs_root_dir+2
     sta fs_cluster_base+2
+    bcs @bad_fs_1
 
     ; The first cluster is cluster #2. Subtract twice the cluster size from
     ; the cluster base.
@@ -1471,20 +1532,20 @@ end_read:
     lda #0
     sta fs_clusters+2
     sta fs_clusters+3
-    lda io_xfer+19  ; sector count, low byte
+    lda io_xfer+boot_record::BPB_TotSec16+0
     sta fs_clusters+0
-    lda io_xfer+20  ; sector count, high byte
+    lda io_xfer+boot_record::BPB_TotSec16+1
     sta fs_clusters+1
     ora fs_clusters+0
     bne @got_sectors
         ; 16 bit sector count is zero; use 32 bit sector count
-        lda io_xfer+32
+        lda io_xfer+boot_record::BPB_TotSec32+0
         sta fs_clusters+0
-        lda io_xfer+33
+        lda io_xfer+boot_record::BPB_TotSec32+1
         sta fs_clusters+1
-        lda io_xfer+34
+        lda io_xfer+boot_record::BPB_TotSec32+2
         sta fs_clusters+2
-        lda io_xfer+35
+        lda io_xfer+boot_record::BPB_TotSec32+3
         sta fs_clusters+3
     @got_sectors:
 
@@ -1531,9 +1592,56 @@ end_read:
     @end_shift6:
     sta fs_clusters+3
 
-    lda #16
-    sta fs_type
-    rts
+    ; Set the file system type and FAT32-specific parameters
+    lda #0
+    sta fs_ext_flags
+    sta fs_info_sector+0
+    sta fs_info_sector+1
+    ora fs_clusters+2
+    bne @fat32          ; must be FAT32 if > 65535
+    lda fs_clusters+0
+    cmp #$F7
+    lda fs_clusters+1
+    sbc #$0F
+    bcs @fat16
+        lda #12
+        sta fs_type
+        rts
+    @fat16:
+    lda fs_clusters+0
+    cmp #$F7
+    lda fs_clusters+1
+    sbc #$FF
+    bcs @fat32
+        lda #16
+        sta fs_type
+        rts
+    @fat32:
+        ; Check for version 0
+        lda io_xfer+boot_record::BPB_FSVer+0
+        ora io_xfer+boot_record::BPB_FSVer+1
+        bne @bad_fs_2
+            lda #32
+            sta fs_type
+            lda io_xfer+boot_record::BPB_ExtFlags
+            sta fs_ext_flags
+            lda io_xfer+boot_record::BPB_FSInfo+0
+            sta fs_info_sector+0
+            lda io_xfer+boot_record::BPB_FSInfo+1
+            sta fs_info_sector+1
+            lda io_xfer+boot_record::BPB_RootClus+0
+            sta fs_root_dir+0
+            lda io_xfer+boot_record::BPB_RootClus+1
+            sta fs_root_dir+1
+            lda io_xfer+boot_record::BPB_RootClus+2
+            sta fs_root_dir+2
+            lda io_xfer+boot_record::BPB_RootClus+3
+            sta fs_root_dir+3
+            rts
+        @bad_fs_2:
+            lda #0
+            sta fs_type
+            rts
 
 cluster_offset_lo:
     .byte <$0002
@@ -1665,14 +1773,28 @@ cluster_offset_hi:
     ldx #<title_root_dir
     ldy #>title_root_dir
     jsr print_string
-    lda fs_root_dir+2
-    jsr print_byte
-    lda fs_root_dir+1
-    jsr print_byte
-    lda fs_root_dir+0
-    jsr print_byte
-    lda #0
-    jsr print_byte
+    lda fs_type
+    cmp #32
+    beq @fat32
+        lda fs_root_dir+2
+        jsr print_byte
+        lda fs_root_dir+1
+        jsr print_byte
+        lda fs_root_dir+0
+        jsr print_byte
+        lda #0
+        jsr print_byte
+    jmp @end_root_dir
+    @fat32:
+        lda fs_root_dir+3
+        jsr print_byte
+        lda fs_root_dir+2
+        jsr print_byte
+        lda fs_root_dir+1
+        jsr print_byte
+        lda fs_root_dir+0
+        jsr print_byte
+    @end_root_dir:
     lda #$0D
     jsr CHROUT
 
@@ -1690,6 +1812,24 @@ cluster_offset_hi:
     lda #$0D
     jsr CHROUT
 
+    ldx #<title_ext_flags
+    ldy #>title_ext_flags
+    jsr print_string
+    lda fs_ext_flags
+    jsr print_byte
+    lda #$0D
+    jsr CHROUT
+
+    ldx #<title_info_sector
+    ldy #>title_info_sector
+    jsr print_string
+    lda fs_info_sector+1
+    jsr print_byte
+    lda fs_info_sector+0
+    jsr print_byte
+    lda #$0D
+    jsr CHROUT
+
     rts
 
 title_type: .asciiz "fs_type="
@@ -1702,6 +1842,8 @@ title_first_fat: .asciiz "fs_first_fat="
 title_second_fat: .asciiz "fs_second_fat="
 title_root_dir: .asciiz "fs_root_dir="
 title_cluster_base: .asciiz "fs_cluster_base="
+title_ext_flags: .asciiz "fs_ext_flags="
+title_info_sector: .asciiz "fs_info_sector="
 
 .endproc
 .endif
