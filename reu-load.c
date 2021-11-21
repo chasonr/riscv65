@@ -8,6 +8,7 @@
 #include "chain-prg.h"
 
 #define PROGRAM "/usb0/hello"
+#define FILESYSTEM "/usb0/filesys.img"
 
 /* Settings for RISC-V registers: */
 /* Entry point, lower three bytes (upper byte is 0x01) */
@@ -658,6 +659,10 @@ main(void)
         goto bad_program;
     }
 
+    if (!dos_open(1, FILESYSTEM, FA_READ)) {
+        goto bad_filesystem;
+    }
+
     // Chain to the RISC-V emulator
     memcpy((void *)CHAIN_ADDR, chain_prg, chain_prg_size);
     ((void (*)(void))CHAIN_ADDR)();
@@ -665,6 +670,8 @@ main(void)
     return EXIT_SUCCESS;
 
 bad_platform:
+    dos_close(1);
+    dos_close(2);
     fputc(147, stdout);
          //1234567890123456789012345678901234567890
     fputs("Hardware requirements for this program:\n", stdout);
@@ -686,7 +693,16 @@ bad_platform:
     return EXIT_FAILURE;
 
 bad_program:
+    dos_close(1);
+    dos_close(2);
     fputs("Could not load program:\n", stdout);
     fputs(PROGRAM, stdout);
+    return EXIT_FAILURE;
+
+bad_filesystem:
+    dos_close(1);
+    dos_close(2);
+    fputs("Could not load file system:\n", stdout);
+    fputs(FILESYSTEM, stdout);
     return EXIT_FAILURE;
 }

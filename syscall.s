@@ -58,6 +58,55 @@ timeval_size = 16
 xfer_size = 16
 io_xfer: .res 512
 
+; Structures for open files
+MAX_FILES = 16
+file_data: .res MAX_FILES*64
+.struct filedata
+    ; Structure from the file system directory
+    name       .byte 11
+    attributes .byte  1
+    case_flags .byte  1
+    ctime_lo   .byte  1
+    ctime      .word  1
+    cdate      .word  1
+    reserved   .word  1
+    cluster_hi .word  1
+    mtime      .word  1
+    mdate      .word  1
+    cluster_lo .word  1
+    size       .dword 1
+
+    ; Location of the directory entry
+    dir_start  .dword 1  ; cluster where enclosing directory starts; 0 for root
+    dir_entry  .word  1  ; index of this entry in the directory
+    lfn_entry  .word  1  ; index of first LFN entry; equal to dir_entry if no LFN
+
+    ; Mode for opening the file (read, write, append)
+    file_mode  .byte  1
+
+    ; Size as cluster and offset within cluster
+    cluster_size .dword 1
+    cluster_offs .word 1
+
+    ; Current position as cluster and offset within cluster
+    cluster_pos .dword 1
+    cluster_ptr .word 1
+.endstruct
+
+; File system data
+; 3-byte quantities are in multiples of 256 bytes with the low byte being
+; implicitly zero
+fs_type:          .res 1 ; 0 (invalid), 12 (FAT12), 16 (FAT16), 32 (FAT32)
+fs_sector_shift:  .res 1 ; Shift from sector size to 256
+fs_cluster_shift: .res 1 ; Shift from cluster size to 256
+fs_cluster_size:  .res 2 ; Cluster size in 256-byte blocks
+fs_clusters:      .res 4 ; Number of clusters in file system
+fs_root_dir_size: .res 2 ; Number of entries in root directory
+fs_first_fat:     .res 3 ; 256-byte offset to first FAT
+fs_second_fat:    .res 3 ; 256-byte offset to second FAT; == first_FAT if only one FAT
+fs_root_dir:      .res 3 ; 256-byte offset to root directory
+fs_cluster_base:  .res 3 ; Add this to shifted cluster number to get offset to cluster
+
 .segment "ZEROPAGE"
 io_count: .res 1
 io_index: .res 1
@@ -88,7 +137,9 @@ CMD_STATE_MORE = $30
 CMD_STAT_AV    = $40
 CMD_DATA_AV    = $80
 
-DOS_CMD_GET_TIME = $26
+DOS_CMD_READ_DATA = $04
+DOS_CMD_FILE_SEEK = $06
+DOS_CMD_GET_TIME  = $26
 
 .code
 
@@ -109,6 +160,9 @@ DOS_CMD_GET_TIME = $26
     lda #1
     sta RISCV_break+3
     sta RISCV_min_break+3
+
+    ; Get the file system layout
+    jsr init_fs
 
     rts
 
@@ -1190,6 +1244,523 @@ end_read:
     sta io_xfer+256,y
 
     rts
+
+.endproc
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; File system ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+.proc init_fs
+
+    ; Read the boot sector from the file system
+    lda #1
+    sta io_xfer+0
+    lda #DOS_CMD_FILE_SEEK
+    sta io_xfer+1
+    lda #0
+    sta io_xfer+2
+    sta io_xfer+3
+    sta io_xfer+4
+    sta io_xfer+5
+    ldx #6
+    jsr do_command
+    lda io_xfer+256
+    cmp #'0'
+    beq @read_ok
+        jmp @bad_fs
+    @read_ok:
+
+    lda #1
+    sta io_xfer+0
+    lda #DOS_CMD_READ_DATA
+    sta io_xfer+1
+    lda #128
+    sta io_xfer+2
+    lda #0
+    sta io_xfer+3
+    ldx #4
+    jsr do_command
+    cpy #0
+    beq :+
+        jmp @bad_fs
+    :
+    cpx #128
+    beq :+
+        jmp @bad_fs
+    :
+
+    ; Determine fs_sector_shift
+    lda io_xfer+11  ; sector size, low byte
+    beq :+
+        jmp @bad_fs ; sector size < 256 or not power of two
+    :
+    lda io_xfer+12  ; sector size, high byte
+    bne :+
+        jmp @bad_fs ; sector size is zero
+    :
+    ldx #0
+    @shift1:
+        lsr a
+        bcs @end_shift1
+    inx
+    bne @shift1
+    @end_shift1:
+    cmp #0
+    bne @bad_fs_0   ; sector size is not a power of two
+    stx fs_sector_shift
+
+    ; Determine fs_cluster_shift
+    lda io_xfer+13  ; number of sectors per cluster
+    beq @bad_fs_0   ; cluster size is zero
+    ; Leave X alone; this count is cumulative with the last one
+    @shift2:
+        lsr a
+        bcs @end_shift2
+    inx
+    bne @shift2
+    @end_shift2:
+    cmp #0
+    bne @bad_fs_0   ; cluster size is not a power of two
+    stx fs_cluster_shift
+
+    ; Determine fs_cluster_size
+    lda io_xfer+13  ; number of sectors per cluster
+    sta fs_cluster_size+0
+    lda #0
+    ldx fs_sector_shift
+    beq @end_shift2a
+    @shift2a:
+        asl fs_cluster_size+0
+        rol a
+    dex
+    bne @shift2a
+    @end_shift2a:
+    sta fs_cluster_size+1
+
+    ; Determine fs_first_fat
+    lda io_xfer+14  ; number of reserved sectors, low byte
+    sta fs_first_fat+0
+    lda io_xfer+15  ; number of reserved sectors, high byte
+    sta fs_first_fat+1
+    lda #0
+    ldx fs_sector_shift
+    beq @end_shift3
+    @shift3:
+        asl fs_first_fat+0
+        rol fs_first_fat+1
+        rol a
+    dex
+    bne @shift3
+    @end_shift3:
+    sta fs_first_fat+2
+
+    ; Determine the number of 256-byte blocks per FAT
+    ; Stash this in fs_root_dir for the nonce; we'll need it to determine
+    ; that position and also fs_second_fat
+
+    lda io_xfer+22      ; sectors per FAT, low byte
+    sta fs_root_dir+0
+    lda io_xfer+23      ; sectors per FAT, high byte
+    sta fs_root_dir+1
+    lda #0
+    ldx fs_sector_shift
+    beq @end_shift4
+    @shift4:
+        asl fs_root_dir+0
+        rol fs_root_dir+1
+        rol a
+    dex
+    bne @shift4
+    @end_shift4:
+    sta fs_root_dir+2
+
+    ; Check the number of FATs and determine fs_second_fat
+    lda io_xfer+16  ; number of FATs
+    cmp #1
+    beq @one_fat
+    cmp #2
+    beq @two_fats
+    @bad_fs_0:
+        jmp @bad_fs
+    @two_fats:
+        ; Two FATs
+        clc
+        lda fs_first_fat+0
+        adc fs_root_dir+0 ; actually FAT size in 256-byte blocks
+        sta fs_second_fat+0
+        lda fs_first_fat+1
+        adc fs_root_dir+1
+        sta fs_second_fat+1
+        lda fs_first_fat+2
+        adc fs_root_dir+2
+        sta fs_second_fat+2
+    jmp @got_fats
+    @one_fat:
+        ; One FAT
+        lda fs_first_fat+0
+        sta fs_second_fat+0
+        lda fs_first_fat+1
+        sta fs_second_fat+1
+        lda fs_first_fat+2
+        sta fs_second_fat+2
+    @got_fats:
+
+    ; Determine location of root directory
+    clc
+    lda fs_root_dir+0
+    adc fs_second_fat+0
+    sta fs_root_dir+0
+    lda fs_root_dir+1
+    adc fs_second_fat+1
+    sta fs_root_dir+1
+    lda fs_root_dir+2
+    adc fs_second_fat+2
+    sta fs_root_dir+2
+
+    ; Determine number of entries in root directory
+    ; Save a copy to fs_cluster_base for calculation of that parameter
+    lda io_xfer+17
+    sta fs_root_dir_size+0
+    sta fs_cluster_base+0
+    lda io_xfer+18
+    sta fs_root_dir_size+1
+    sta fs_cluster_base+1
+
+    ; Determine base for cluster area:
+    ; Start with the root directory size in bytes
+    lda #0
+    .repeat 3
+        lsr fs_cluster_base+1
+        ror fs_cluster_base+0
+        ror a
+    .endrep
+    ; Round up to sector size
+    ldx io_xfer+12  ; sector size, high byte
+    dex
+    cmp #$01 ; set carry if A != 0
+    txa
+    adc fs_cluster_base+0
+    sta fs_cluster_base+0
+    lda #0
+    adc fs_cluster_base+1
+    sta fs_cluster_base+1
+    txa
+    eor #$FF
+    and fs_cluster_base+0
+    ; Add the base of the root directory
+    clc
+    adc fs_root_dir+0
+    sta fs_cluster_base+0
+    lda fs_cluster_base+1
+    adc fs_root_dir+1
+    sta fs_cluster_base+1
+    lda #0
+    adc fs_root_dir+2
+    sta fs_cluster_base+2
+
+    ; The first cluster is cluster #2. Subtract twice the cluster size from
+    ; the cluster base.
+
+    ldx fs_cluster_shift
+    sec
+    lda fs_cluster_base+0
+    sbc cluster_offset_lo,x
+    sta fs_cluster_base+0
+    lda fs_cluster_base+1
+    sbc cluster_offset_hi,x
+    sta fs_cluster_base+1
+    lda fs_cluster_base+2
+    sbc #0
+    sta fs_cluster_base+2
+
+    ; Determine the number of clusters
+    lda #0
+    sta fs_clusters+2
+    sta fs_clusters+3
+    lda io_xfer+19  ; sector count, low byte
+    sta fs_clusters+0
+    lda io_xfer+20  ; sector count, high byte
+    sta fs_clusters+1
+    ora fs_clusters+0
+    bne @got_sectors
+        ; 16 bit sector count is zero; use 32 bit sector count
+        lda io_xfer+32
+        sta fs_clusters+0
+        lda io_xfer+33
+        sta fs_clusters+1
+        lda io_xfer+34
+        sta fs_clusters+2
+        lda io_xfer+35
+        sta fs_clusters+3
+    @got_sectors:
+
+    ; Shift sector count to file system size in 256-byte blocks
+    lda #0
+    ldx fs_sector_shift
+    beq @end_shift5
+    @shift5:
+        asl fs_clusters+0
+        rol fs_clusters+1
+        rol fs_clusters+2
+        rol fs_clusters+3
+        rol a
+    dex
+    bne @shift5
+    @end_shift5:
+    sta fs_clusters+3
+
+    ; Subtract fs_cluster_base, giving the number of 256-byte blocks available
+    ; for data
+    sec
+    lda fs_clusters+0
+    sbc fs_cluster_base+0
+    sta fs_clusters+0
+    lda fs_clusters+1
+    sbc fs_cluster_base+1
+    sta fs_clusters+1
+    lda fs_clusters+2
+    sbc fs_cluster_base+2
+    sta fs_clusters+2
+    lda fs_clusters+3
+    sbc #0
+
+    ; Shift to get the number of clusters
+    ldx fs_cluster_shift
+    beq @end_shift6
+    @shift6:
+        lsr a
+        ror fs_clusters+2
+        ror fs_clusters+1
+        ror fs_clusters+0
+    dex
+    bne @shift6
+    @end_shift6:
+    sta fs_clusters+3
+
+    lda #16
+    sta fs_type
+    rts
+
+@bad_fs:
+    lda #0
+    sta fs_type
+    rts
+
+cluster_offset_lo:
+    .byte <$0002
+    .byte <$0004
+    .byte <$0008
+    .byte <$0010
+    .byte <$0020
+    .byte <$0040
+    .byte <$0080
+    .byte <$0100
+    .byte <$0200
+    .byte <$0400
+    .byte <$0800
+    .byte <$1000
+    .byte <$2000
+    .byte <$4000
+    .byte <$8000
+cluster_offset_hi:
+    .byte >$0002
+    .byte >$0004
+    .byte >$0008
+    .byte >$0010
+    .byte >$0020
+    .byte >$0040
+    .byte >$0080
+    .byte >$0100
+    .byte >$0200
+    .byte >$0400
+    .byte >$0800
+    .byte >$1000
+    .byte >$2000
+    .byte >$4000
+    .byte >$8000
+
+.endproc
+
+; Debug: dump the file system parameters
+.if 0
+.proc dump_fs_params
+
+    ldx #<title_type
+    ldy #>title_type
+    jsr print_string
+    lda fs_type
+    jsr print_byte
+    lda #$0D
+    jsr CHROUT
+
+    ldx #<title_sector_shift
+    ldy #>title_sector_shift
+    jsr print_string
+    lda fs_sector_shift
+    jsr print_byte
+    lda #$0D
+    jsr CHROUT
+
+    ldx #<title_cluster_shift
+    ldy #>title_cluster_shift
+    jsr print_string
+    lda fs_cluster_shift
+    jsr print_byte
+    lda #$0D
+    jsr CHROUT
+
+    ldx #<title_cluster_size
+    ldy #>title_cluster_size
+    jsr print_string
+    lda fs_cluster_size+1
+    jsr print_byte
+    lda fs_cluster_size+0
+    jsr print_byte
+    lda #0
+    jsr print_byte
+    lda #$0D
+    jsr CHROUT
+
+    ldx #<title_clusters
+    ldy #>title_clusters
+    jsr print_string
+    lda fs_clusters+3
+    jsr print_byte
+    lda fs_clusters+2
+    jsr print_byte
+    lda fs_clusters+1
+    jsr print_byte
+    lda fs_clusters+0
+    jsr print_byte
+    lda #$0D
+    jsr CHROUT
+
+    ldx #<title_root_dir_size
+    ldy #>title_root_dir_size
+    jsr print_string
+    lda fs_root_dir_size+1
+    jsr print_byte
+    lda fs_root_dir_size+0
+    jsr print_byte
+    lda #$0D
+    jsr CHROUT
+
+    ldx #<title_first_fat
+    ldy #>title_first_fat
+    jsr print_string
+    lda fs_first_fat+2
+    jsr print_byte
+    lda fs_first_fat+1
+    jsr print_byte
+    lda fs_first_fat+0
+    jsr print_byte
+    lda #0
+    jsr print_byte
+    lda #$0D
+    jsr CHROUT
+
+    ldx #<title_second_fat
+    ldy #>title_second_fat
+    jsr print_string
+    lda fs_second_fat+2
+    jsr print_byte
+    lda fs_second_fat+1
+    jsr print_byte
+    lda fs_second_fat+0
+    jsr print_byte
+    lda #0
+    jsr print_byte
+    lda #$0D
+    jsr CHROUT
+
+    ldx #<title_root_dir
+    ldy #>title_root_dir
+    jsr print_string
+    lda fs_root_dir+2
+    jsr print_byte
+    lda fs_root_dir+1
+    jsr print_byte
+    lda fs_root_dir+0
+    jsr print_byte
+    lda #0
+    jsr print_byte
+    lda #$0D
+    jsr CHROUT
+
+    ldx #<title_cluster_base
+    ldy #>title_cluster_base
+    jsr print_string
+    lda fs_cluster_base+2
+    jsr print_byte
+    lda fs_cluster_base+1
+    jsr print_byte
+    lda fs_cluster_base+0
+    jsr print_byte
+    lda #0
+    jsr print_byte
+    lda #$0D
+    jsr CHROUT
+
+    rts
+
+title_type: .asciiz "fs_type="
+title_sector_shift: .asciiz "fs_sector_shift="
+title_cluster_shift: .asciiz "fs_cluster_shift="
+title_cluster_size: .asciiz "fs_cluster_size="
+title_clusters: .asciiz "fs_clusters="
+title_root_dir_size: .asciiz "fs_root_dir_size="
+title_first_fat: .asciiz "fs_first_fat="
+title_second_fat: .asciiz "fs_second_fat="
+title_root_dir: .asciiz "fs_root_dir="
+title_cluster_base: .asciiz "fs_cluster_base="
+
+.endproc
+.endif
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; For debugging
+
+.code
+
+; Print string at Y:X
+.proc print_string
+
+    stx local_addr+0
+    sty local_addr+1
+    @print:
+        ldy #0
+        lda (local_addr),y
+        beq @end_print
+        jsr CHROUT
+    inc local_addr+0
+    bne @print
+    inc local_addr+1
+    bne @print
+    @end_print:
+    rts
+
+.endproc
+
+; Print byte in A as hex
+.proc print_byte
+
+    pha
+    lsr a
+    lsr a
+    lsr a
+    lsr a
+    tax
+    lda hexdigit,x
+    jsr CHROUT
+    pla
+    and #$0F
+    tax
+    lda hexdigit,x
+    jmp CHROUT
+
+hexdigit: .byte "0123456789ABCDEF"
 
 .endproc
 
