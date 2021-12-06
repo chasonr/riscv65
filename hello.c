@@ -10,7 +10,7 @@ main(void)
     static const char path[] = "/dir.1/dir.2/test.txt";
     int fd = open(path, 0, 0);
     int x = errno;
-    printf("len=%u open returns: %d\r\n", (unsigned)strlen(path), fd);
+    printf("len=%u open returns: %d\n", (unsigned)strlen(path), fd);
     errno = x;
 
     if (fd >= 0) {
@@ -27,7 +27,7 @@ main(void)
             write(1, buf, len);
             count += len;
         } while (len != 0);
-        printf("Read %ld bytes\r\n", count);
+        printf("Read %ld bytes\n", count);
     } else {
         perror(path);
     }
