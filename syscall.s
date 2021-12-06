@@ -3,6 +3,7 @@
 ; External parameters come from here
 RISCV_BREAK = $07F4
 
+.macpack longbranch
 .include "registers.inc"
 .include "kernal.inc"
 .include "errno.inc"
@@ -55,12 +56,30 @@ kernel_stat_size = 128
 timeval_size = 16
 
 ; Transfer area for I/O
-xfer_size = 16
+xfer_size = 16      ; Size for transfer when doing character I/O
 io_xfer: .res 512
 
-; Structures for open files
-MAX_FILES = 16
-file_data: .res MAX_FILES*64
+; Read file paths into this area
+filename_max = 1024 ; FILENAME_MAX from Newlib stdio.h
+fs_path: .res filename_max+1
+
+; File handle being accessed
+file_handle: .res 1
+
+; Path component being searched
+path_part: .res 11
+
+; Number of directory entries remaining in cluster
+dir_size: .res 3
+
+; Cluster currently being followed
+cluster: .res 3
+
+; Size to be read or written
+rw_size: .res 3
+
+; Structures for file access
+; Operations in progress use file_data; open files are contained in open_files
 .struct filedata
     ; Structure from the file system directory
     name       .byte 11
@@ -78,20 +97,47 @@ file_data: .res MAX_FILES*64
 
     ; Location of the directory entry
     dir_start  .dword 1  ; cluster where enclosing directory starts; 0 for root
-    dir_entry  .word  1  ; index of this entry in the directory
-    lfn_entry  .word  1  ; index of first LFN entry; equal to dir_entry if no LFN
+    dir_entry  .dword 1  ; position of this directory entry
+    lfn_entry  .dword 1  ; position of first LFN entry; equal to dir_entry if no LFN
 
     ; Mode for opening the file (read, write, append)
     file_mode  .byte  1
 
     ; Size as cluster and offset within cluster
-    cluster_size .dword 1
-    cluster_offs .word 1
+    cluster_count .byte 3 ; not including partial cluster at the end
+    cluster_partial .byte 3
 
     ; Current position as cluster and offset within cluster
-    cluster_pos .dword 1
-    cluster_ptr .word 1
+    current_cluster .byte 3
+    cluster_pos .byte 3
+    cluster_ptr .byte 3
 .endstruct
+MAX_FILES = 16
+file_data: .tag filedata
+open_files: .tag filedata
+open_files_1:
+    filedata_size = open_files_1 - open_files
+    .res filedata_size * (MAX_FILES-1)
+
+.segment "RODATA"
+open_files_lo:
+    .repeat MAX_FILES,i
+        .byte <(open_files + filedata_size*i)
+    .endrep
+open_files_hi:
+    .repeat MAX_FILES,i
+        .byte >(open_files + filedata_size*i)
+    .endrep
+
+.bss
+
+; Attribute flags
+ATTR_READONLY  = $01
+ATTR_HIDDEN    = $02
+ATTR_SYSTEM    = $04
+ATTR_VOLUME    = $08
+ATTR_DIRECTORY = $10
+ATTR_ARCHIVE   = $20
 
 ; File system data
 ; 3-byte quantities are in multiples of 256 bytes with the low byte being
@@ -109,11 +155,14 @@ fs_root_dir:      .res 4 ; 256-byte offset to root directory (FAT12, FAT16)
 fs_cluster_base:  .res 3 ; Add this to shifted cluster number to get offset to cluster
 fs_ext_flags:     .res 1 ; FAT32 extended flags
 fs_info_sector:   .res 2 ; FAT32 info sector
+fs_current_dir:   .res 4 ; Starting cluster of current directory; 0 for root on FAT12 or FAT16
 
 .segment "ZEROPAGE"
 io_count: .res 1
 io_index: .res 1
 local_addr: .res 2
+local_addr2: .res 2
+path_ptr: .res 2
 
 ; U64 command interface
 
@@ -142,6 +191,7 @@ CMD_DATA_AV    = $80
 
 DOS_CMD_READ_DATA = $04
 DOS_CMD_FILE_SEEK = $06
+DOS_CMD_LOAD_REU  = $21
 DOS_CMD_GET_TIME  = $26
 
 .code
@@ -180,32 +230,421 @@ DOS_CMD_GET_TIME  = $26
 .global SYS_close
 .proc SYS_close
 
-    ; Ignore any attempt to close file 0, 1 or 2
+    ; File handles above 255 are not assigned
     lda _RISCV_ireg_1+REG_a0
     ora _RISCV_ireg_2+REG_a0
     ora _RISCV_ireg_3+REG_a0
-    bne close_file
+    bne bad_file
+
+    ; Ignore any attempt to close file 0, 1 or 2
     lda _RISCV_ireg_0+REG_a0
-    cmp #3
-    bcs close_file
+    sec
+    sbc #3
+    bcc file_closed
 
+    ; A has index to open_files
+    ; Check that it is valid 
+    cmp #MAX_FILES
+    bcs bad_file
+
+        sta file_handle
+
+        ; Build pointer to open_files
+        tax
+        lda open_files_lo,x
+        sta local_addr+0
+        lda open_files_hi,x
+        sta local_addr+1
+
+        ; Check that the file was open
+        ldy #0
+        lda (local_addr),y
+        beq bad_file        ; File was not open
+
+        ; TODO: If file was open for writing, update the directory entry
+
+        ; Mark the file as closed
         lda #0
-        sta _RISCV_ireg_0+REG_a0
-        sta _RISCV_ireg_1+REG_a0
-        sta _RISCV_ireg_2+REG_a0
-        sta _RISCV_ireg_3+REG_a0
-        rts
+        sta (local_addr),y
 
-    close_file:
+file_closed:
+    lda #0
+    sta _RISCV_ireg_0+REG_a0
+    sta _RISCV_ireg_1+REG_a0
+    sta _RISCV_ireg_2+REG_a0
+    sta _RISCV_ireg_3+REG_a0
+    rts
 
-    ; File I/O not yet implemented
+bad_file:
     set_errno EBADF
     rts
 
 .endproc
 
 ; SYS_lseek        = bad_ecall
-; SYS_read         = bad_ecall
+
+; Read from the given file handle
+; A0 = file handle
+; A1 = pointer to data
+; A2 = length of data
+
+.global SYS_read
+.proc SYS_read
+
+    ; Set up the transfer area
+    lda _RISCV_ireg_0+REG_a1
+    sta io_addr+0
+    lda _RISCV_ireg_1+REG_a1
+    sta io_addr+1
+    lda _RISCV_ireg_2+REG_a1
+    sta io_addr+2
+    lda _RISCV_ireg_3+REG_a1
+    sta io_addr+3
+    lda _RISCV_ireg_0+REG_a2
+    sta io_size+0
+    lda _RISCV_ireg_1+REG_a2
+    sta io_size+1
+    lda _RISCV_ireg_2+REG_a2
+    sta io_size+2
+    lda _RISCV_ireg_3+REG_a2
+    sta io_size+3
+    jsr check_write
+    bcc write_ok
+        set_errno EFAULT
+        rts
+    write_ok:
+
+    ; Check for special file handles 0, 1 and 2
+    lda _RISCV_ireg_1+REG_a0
+    ora _RISCV_ireg_2+REG_a0
+    ora _RISCV_ireg_3+REG_a0
+    bne bad_file
+    lda _RISCV_ireg_0+REG_a0
+    bne check_output
+    bad_file:
+        ; Handle 0 (standard input; not yet implemented)
+        set_errno EBADF
+        rts
+    check_output:
+    sec
+    sbc #3
+    bcs check_file
+        ; Handle 1 (standard output) or 2 (standard error)
+        ; These are not valid
+        set_errno EBADF
+        rts
+    check_file:
+    ; A has index to open_files
+    ; Check that it is valid 
+    cmp #MAX_FILES
+    bcs bad_file
+        sta file_handle
+
+        ; Build pointer to open_files
+        tax
+        lda open_files_lo,x
+        sta local_addr+0
+        lda open_files_hi,x
+        sta local_addr+1
+
+        ; Check that the file is open
+        ldy #0
+        lda (local_addr),y
+        beq bad_file
+
+        ; TODO: check that the file is open for reading
+
+        ; Read loop
+        jmp @end_read_loop
+        @read_loop:
+
+            ; Are we reading from the last cluster?
+            ldy #filedata::cluster_count+0
+            lda (local_addr),y
+            ldy #filedata::cluster_pos+0
+            cmp (local_addr),y
+            bne @whole_cluster
+            ldy #filedata::cluster_count+1
+            lda (local_addr),y
+            ldy #filedata::cluster_pos+1
+            cmp (local_addr),y
+            bne @whole_cluster
+            ldy #filedata::cluster_count+2
+            lda (local_addr),y
+            ldy #filedata::cluster_pos+2
+            cmp (local_addr),y
+            bne @whole_cluster
+                ; This is the last cluster.
+                ; The maximum size is cluster_partial - cluster_ptr.
+                sec
+                ldy #filedata::cluster_partial+0
+                lda (local_addr),y
+                ldy #filedata::cluster_ptr+0
+                sbc (local_addr),y
+                sta rw_size+0
+                ldy #filedata::cluster_partial+1
+                lda (local_addr),y
+                ldy #filedata::cluster_ptr+1
+                sbc (local_addr),y
+                sta rw_size+1
+                ldy #filedata::cluster_partial+2
+                lda (local_addr),y
+                ldy #filedata::cluster_ptr+2
+                sbc (local_addr),y
+                sta rw_size+2
+                ; If this is zero, we're at end of file
+                ora rw_size+0
+                ora rw_size+1
+                beq :+
+                    jmp @set_size   ; Read the next set of bytes
+                :
+                    jmp @end_read   ; Size is zero; this is EOF
+            @whole_cluster:
+                ; This is not the last cluster.
+                ; The maximum size is fs_cluster_size - cluster_ptr.
+                sec
+                ldy #filedata::cluster_ptr+0
+                lda #0
+                sbc (local_addr),y
+                sta rw_size+0
+                iny
+                lda fs_cluster_size+0
+                sbc (local_addr),y
+                sta rw_size+1
+                iny
+                lda fs_cluster_size+1
+                sbc (local_addr),y
+                sta rw_size+2
+                ; If this is zero, advance to the next cluster
+                ora rw_size+0
+                ora rw_size+1
+                bne @set_size
+                    ; Get the next cluster number
+                    ldy #filedata::current_cluster+0
+                    lda (local_addr),y
+                    sta cluster+0
+                    iny
+                    lda (local_addr),y
+                    sta cluster+1
+                    iny
+                    lda (local_addr),y
+                    sta cluster+2
+                    jsr next_cluster
+                    bcc @cluster_ok
+                        ; Can produce EOF if the file size is an exact multiple
+                        ; of the cluster size
+                        cmp #$100-ENOENT
+                        jeq @end_read
+                        ; Otherwise return error
+                        sta _RISCV_ireg_0+REG_a0
+                        lda #$FF
+                        sta _RISCV_ireg_1+REG_a0
+                        sta _RISCV_ireg_2+REG_a0
+                        sta _RISCV_ireg_3+REG_a0
+                        rts
+                    @cluster_ok:
+                    ; Update the position
+                    ldy #filedata::current_cluster+0
+                    lda cluster+0
+                    sta (local_addr),y
+                    iny
+                    lda cluster+1
+                    sta (local_addr),y
+                    iny
+                    lda cluster+2
+                    sta (local_addr),y
+                    ldy #filedata::cluster_pos+0
+                    ; There's no inc (xx),y; do this the long way
+                    clc
+                    lda (local_addr),y
+                    adc #1
+                    sta (local_addr),y
+                    iny
+                    lda (local_addr),y
+                    adc #0
+                    sta (local_addr),y
+                    iny
+                    lda (local_addr),y
+                    adc #0
+                    sta (local_addr),y
+                    ldy #filedata::cluster_ptr+0
+                    lda #0
+                    sta (local_addr),y
+                    iny
+                    sta (local_addr),y
+                    iny
+                    sta (local_addr),y
+                    ; Repeat the loop without having read any data
+                    jeq @read_loop
+
+            @set_size:
+            ; Use the lesser of the size remaining or the maximum size
+            lda io_size+0
+            cmp rw_size+0
+            lda io_size+1
+            sbc rw_size+1
+            lda io_size+2
+            sbc rw_size+2
+            bcs @do_read
+                lda io_size+0
+                sta rw_size+0
+                lda io_size+1
+                sta rw_size+1
+                lda io_size+2
+                sta rw_size+2
+            @do_read:
+
+            ; Seek to the position to be read
+            ldy #filedata::current_cluster
+            lda #0
+            sta io_xfer+2
+            lda (local_addr),y
+            sta io_xfer+3
+            iny
+            lda (local_addr),y
+            sta io_xfer+4
+            iny
+            lda (local_addr),y
+            ldx fs_cluster_shift
+            beq @end_shift
+            @shift:
+                asl io_xfer+3
+                rol io_xfer+4
+                rol a
+            dex
+            bne @shift
+            @end_shift:
+            sta io_xfer+5
+            clc
+            lda fs_cluster_base+0
+            adc io_xfer+3
+            sta io_xfer+3
+            lda fs_cluster_base+1
+            adc io_xfer+4
+            sta io_xfer+4
+            lda fs_cluster_base+2
+            adc io_xfer+5
+            sta io_xfer+5
+            clc
+            ldy #filedata::cluster_ptr
+            lda (local_addr),y
+            adc io_xfer+2
+            sta io_xfer+2
+            iny
+            lda (local_addr),y
+            adc io_xfer+3
+            sta io_xfer+3
+            iny
+            lda (local_addr),y
+            adc io_xfer+4
+            sta io_xfer+4
+            lda #0
+            adc io_xfer+5
+            sta io_xfer+5
+            lda #$01
+            sta io_xfer+0
+            lda #DOS_CMD_FILE_SEEK
+            sta io_xfer+1
+            ldx #6
+            jsr do_command
+            lda io_xfer+256
+            cmp #'0'
+            beq @seek_ok
+            @eio:
+                set_errno EIO
+                rts
+            @seek_ok:
+
+            ; Transfer directly from volume to REU
+            lda #$01
+            sta io_xfer+0
+            lda #DOS_CMD_LOAD_REU
+            sta io_xfer+1
+            lda io_addr+0
+            sta io_xfer+2
+            lda io_addr+1
+            sta io_xfer+3
+            lda io_addr+2
+            sta io_xfer+4
+            lda rw_size+0
+            sta io_xfer+6
+            lda rw_size+1
+            sta io_xfer+7
+            lda rw_size+2
+            sta io_xfer+8
+            lda #0
+            sta io_xfer+5
+            sta io_xfer+9
+            ldx #10
+            jsr do_command
+            lda io_xfer+256
+            cmp #'0'
+            jne @eio
+
+            ; Advance file position
+            clc
+            ldy #filedata::cluster_ptr
+            lda rw_size+0
+            adc (local_addr),y
+            sta (local_addr),y
+            iny
+            lda rw_size+1
+            adc (local_addr),y
+            sta (local_addr),y
+            iny
+            lda rw_size+2
+            adc (local_addr),y
+            sta (local_addr),y
+
+            ; Advance io_addr
+            clc
+            lda rw_size+0
+            adc io_addr+0
+            sta io_addr+0
+            lda rw_size+1
+            adc io_addr+1
+            sta io_addr+1
+            lda rw_size+2
+            adc io_addr+2
+            sta io_addr+2
+
+            ; Advance io_size
+            sec
+            lda io_size+0
+            sbc rw_size+0
+            sta io_size+0
+            lda io_size+1
+            sbc rw_size+1
+            sta io_size+1
+            lda io_size+2
+            sbc rw_size+2
+            sta io_size+2
+
+        ; Continue until read is complete
+        @end_read_loop:
+        lda io_size+0
+        ora io_size+1
+        ora io_size+2
+        jne @read_loop
+        @end_read:
+
+        ; Return the number of bytes read
+        sec
+        lda _RISCV_ireg_0+REG_a2
+        sbc io_size+0
+        sta _RISCV_ireg_0+REG_a0
+        lda _RISCV_ireg_1+REG_a2
+        sbc io_size+1
+        sta _RISCV_ireg_1+REG_a0
+        lda _RISCV_ireg_2+REG_a2
+        sbc io_size+2
+        sta _RISCV_ireg_2+REG_a0
+        lda #0
+        sta _RISCV_ireg_3+REG_a0
+        rts
+
+cluster_label: .asciiz "Cluster "
+.endproc
 
 ; Write to the given file handle
 ; A0 = file handle
@@ -1056,7 +1495,233 @@ error:
 
 .endproc
 
-; SYS_open         = bad_ecall
+; Open a file
+; Path is in A0
+; Open flags are in A1
+; Creation mode is in A2 (this is ignored)
+.global SYS_open
+.proc SYS_open
+
+    ; Look for an unused file handle
+    ldx #0
+    stx local_addr+0
+    @find_handle:
+        ldy open_files_lo,x
+        lda open_files_hi,x
+        sta local_addr+1
+        lda (local_addr),y
+        beq @handle_ok
+    inx
+    cpx #MAX_FILES
+    bcc @find_handle
+        set_errno ENFILE
+        rts
+    @handle_ok:
+    stx file_handle
+
+    ; Set up the transfer area
+    ; We don't know the length in advance. Check that we can read at least
+    ; one byte. read_path will check that the path does not exceed readable
+    ; space.
+    lda _RISCV_ireg_0+REG_a0
+    sta io_addr+0
+    lda _RISCV_ireg_1+REG_a0
+    sta io_addr+1
+    lda _RISCV_ireg_2+REG_a0
+    sta io_addr+2
+    lda _RISCV_ireg_3+REG_a0
+    sta io_addr+3
+    lda #1
+    sta io_size+0
+    lda #0
+    sta io_size+1
+    sta io_size+2
+    sta io_size+3
+    jsr check_read
+    bcc @read_ok
+        set_errno EFAULT
+        rts
+    @read_ok:
+
+    ; Read path into fs_path
+    jsr read_path
+    bcc @path_ok
+        sta _RISCV_ireg_0+REG_a0
+        lda #$FF
+        sta _RISCV_ireg_1+REG_a0
+        sta _RISCV_ireg_2+REG_a0
+        sta _RISCV_ireg_3+REG_a0
+        rts
+    @path_ok:
+
+    ; Begin traversal of path:
+    ; Start at start of path string
+    lda #<fs_path
+    sta path_ptr+0
+    lda #>fs_path
+    sta path_ptr+1
+
+    ; Start at current directory, or root if absolute path
+    lda #0
+    ldy #63
+    @zero_loop:
+        sta file_data,y
+    dey
+    bpl @zero_loop
+    lda #ATTR_DIRECTORY
+    sta file_data+filedata::attributes
+    lda fs_current_dir+0
+    sta file_data+filedata::cluster_lo+0
+    lda fs_current_dir+1
+    sta file_data+filedata::cluster_lo+1
+    lda fs_current_dir+2
+    sta file_data+filedata::cluster_hi+0
+    lda fs_current_dir+3
+    sta file_data+filedata::cluster_hi+1
+    lda fs_path+0
+    bne @path_not_empty
+    ; Empty path is not valid
+        set_errno ENOENT
+        rts
+    @path_not_empty:
+    cmp #$2F
+    beq @root_dir
+    cmp #$5C
+    bne @current_dir
+    @root_dir:
+        ; Start search from root directory
+        lda fs_type
+        cmp #32
+        beq @fat32
+            ; For FAT12 and FAT16, root directory has its own special area
+            lda #0
+            sta file_data+filedata::cluster_lo+0
+            sta file_data+filedata::cluster_lo+1
+            sta file_data+filedata::cluster_hi+0
+            sta file_data+filedata::cluster_hi+1
+            beq @current_dir
+        @fat32:
+            ; For FAT32, root directory starts at a cluster
+            lda fs_root_dir+0
+            sta file_data+filedata::cluster_lo+0
+            lda fs_root_dir+1
+            sta file_data+filedata::cluster_lo+1
+            lda fs_root_dir+2
+            sta file_data+filedata::cluster_hi+0
+            lda fs_root_dir+3
+            sta file_data+filedata::cluster_hi+1
+    @current_dir:
+
+    @path_loop:
+        lda file_data+filedata::cluster_lo+0
+        sta file_data+filedata::dir_start+0
+        lda file_data+filedata::cluster_lo+1
+        sta file_data+filedata::dir_start+1
+        lda file_data+filedata::cluster_hi+0
+        sta file_data+filedata::dir_start+2
+        lda file_data+filedata::cluster_hi+1
+        sta file_data+filedata::dir_start+3
+        jsr get_path_part
+        bcs @end_path_loop
+        jsr find_entry
+    bcc @path_loop
+    @path_err:
+        sta _RISCV_ireg_0+REG_a0
+        lda #$FF
+        sta _RISCV_ireg_1+REG_a0
+        sta _RISCV_ireg_2+REG_a0
+        sta _RISCV_ireg_3+REG_a0
+        rts
+    @end_path_loop:
+    cmp #0
+    bne @path_err
+
+    ;jsr dump_dir_entry
+
+    ; Set open mode flags
+    lda _RISCV_ireg_0+REG_a1
+    sta file_data+filedata::file_mode
+
+    ; TODO: Check for conflicts between open flags and file type
+    ; TODO: Check for conflicts with other openings of the same file
+    ; TODO: Open the file for writing, if requested
+    ; TODO: Create the file, if requested and it does not exist
+    ; TODO: Truncate the file, if requested
+
+    ; Set the number of bytes in the last cluster
+    ldy fs_cluster_size+1   ; Y:X <- fs_cluster_size-1
+    ldx fs_cluster_size+0
+    bne :+
+        dey
+    :
+    dex
+    lda file_data+filedata::size+0
+    sta file_data+filedata::cluster_partial+0
+    txa
+    and file_data+filedata::size+1
+    sta file_data+filedata::cluster_partial+1
+    tya
+    and file_data+filedata::size+2
+    sta file_data+filedata::cluster_partial+2
+
+    ; Set the number of whole clusters in the file
+    lda file_data+filedata::size+1
+    sta file_data+filedata::cluster_count+0
+    lda file_data+filedata::size+2
+    sta file_data+filedata::cluster_count+1
+    lda file_data+filedata::size+3
+    ldx fs_cluster_shift
+    beq @end_shift
+    @shift:
+        lsr a
+        ror file_data+filedata::cluster_count+1
+        ror file_data+filedata::cluster_count+0
+    dex
+    bne @shift
+    @end_shift:
+    sta file_data+filedata::cluster_count+2
+
+    ; Set the initial file position to zero
+    ; TODO: Set to end if append requested
+    lda file_data+filedata::cluster_lo+0
+    sta file_data+filedata::current_cluster+0
+    lda file_data+filedata::cluster_lo+1
+    sta file_data+filedata::current_cluster+1
+    lda file_data+filedata::cluster_hi+0
+    sta file_data+filedata::current_cluster+2
+    lda #0
+    sta file_data+filedata::cluster_pos+0
+    sta file_data+filedata::cluster_pos+1
+    sta file_data+filedata::cluster_pos+2
+    sta file_data+filedata::cluster_ptr+0
+    sta file_data+filedata::cluster_ptr+1
+    sta file_data+filedata::cluster_ptr+2
+
+    ; Copy file_data into the selected entry of open_files
+    ldx file_handle
+    lda open_files_lo,x
+    sta local_addr+0
+    lda open_files_hi,x
+    sta local_addr+1
+    ldy #filedata_size-1
+    @copy:
+        lda file_data,y
+        sta (local_addr),y
+    dey
+    bpl @copy
+
+    ; Return the file handle
+    lda file_handle
+    clc
+    adc #3
+    sta _RISCV_ireg_0+REG_a0
+    lda #$00
+    sta _RISCV_ireg_1+REG_a0
+    sta _RISCV_ireg_2+REG_a0
+    sta _RISCV_ireg_3+REG_a0
+    rts
+
+.endproc
 
 ; Create a hard link
 ; Newlib can call this, but the file system doesn't support it
@@ -1252,7 +1917,7 @@ end_read:
 .endproc
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; File system ;
+;                                File system                                 ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 .proc init_fs
@@ -1277,7 +1942,7 @@ end_read:
         BPB_ExtFlags    .word 1  ; 40
         BPB_FSVer       .word 1  ; 42
         BPB_RootClus    .dword 1 ; 44
-        BPB_FSInfo      .word 1  ; 48 (unused)
+        BPB_FSInfo      .word 1  ; 48
         BPB_BkBootSec   .word 1  ; 50 (unused)
         BPB_Reserved    .byte 12 ; 52 (unused)
     .endstruct
@@ -1597,6 +2262,11 @@ end_read:
     sta fs_ext_flags
     sta fs_info_sector+0
     sta fs_info_sector+1
+    sta fs_current_dir+0
+    sta fs_current_dir+1
+    sta fs_current_dir+2
+    sta fs_current_dir+3
+    lda fs_clusters+3
     ora fs_clusters+2
     bne @fat32          ; must be FAT32 if > 65535
     lda fs_clusters+0
@@ -1631,12 +2301,16 @@ end_read:
             sta fs_info_sector+1
             lda io_xfer+boot_record::BPB_RootClus+0
             sta fs_root_dir+0
+            sta fs_current_dir+0
             lda io_xfer+boot_record::BPB_RootClus+1
             sta fs_root_dir+1
+            sta fs_current_dir+1
             lda io_xfer+boot_record::BPB_RootClus+2
             sta fs_root_dir+2
+            sta fs_current_dir+2
             lda io_xfer+boot_record::BPB_RootClus+3
             sta fs_root_dir+3
+            sta fs_current_dir+3
             rts
         @bad_fs_2:
             lda #0
@@ -1848,6 +2522,1029 @@ title_info_sector: .asciiz "fs_info_sector="
 .endproc
 .endif
 
+; Retrieve a path from the REU.
+; io_addr contains the address. The length is not known in advance, but does
+; not exceed filename_max+1 (else the path is invalid). The path is read into
+; fs_path.
+; Return C clear if OK. If error, C is set and -errno is in A.
+; Possible errno values are ENAMETOOLONG and EFAULT.
+
+.proc read_path
+
+    ; Set size to filename_max+1
+    lda #<(filename_max+1)
+    sta io_size+0
+    lda #>(filename_max+1)
+    sta io_size+1
+
+    ; If that would cross a 64K boundary, set size up to that boundary
+    clc
+    lda io_addr+0
+    adc #<(filename_max+1)
+    lda io_addr+1
+    adc #>(filename_max+1)
+    bcc @size_ok
+        ; Get size up to the next 64K boundary
+        sec
+        lda #0
+        sbc io_addr+0
+        sta io_size+0
+        lda #0
+        sbc io_addr+1
+        sta io_size+1
+    @size_ok:
+
+    ; Read from REU
+    set_reu_address io_addr
+    set_local_address fs_path
+    set_xfer_size io_size
+    do_reu_read
+
+    ; If the path ends within the transfer size, we're done
+    jsr path_ends
+    bcs @read_next
+        rts
+    @read_next:
+
+    ; Get the size for the second part of the read
+    sec
+    lda #<(filename_max+1)
+    sbc io_size+0
+    sta io_size+0
+    lda #>(filename_max+1)
+    sbc io_size+1
+    sta io_size+1
+    ora io_size+0
+    bne @more_to_read
+        ; Already read filename_max+1 bytes
+        lda #$100-ENAMETOOLONG
+        sec
+        rts
+    @more_to_read:
+    ; Set the address for the next part
+    ldx io_addr+2
+    inx
+    bne @addr_ok
+        ; End of REU exceeded
+        lda #$100-EFAULT
+        sec
+        rts
+    @addr_ok:
+    stx reu_xmem_address_2
+    set_xfer_size io_size
+    do_reu_read
+
+    ; Set io_size to the full size of the transfer
+    lda #<(filename_max+1)
+    sta io_size+0
+    lda #>(filename_max+1)
+    sta io_size+1
+
+    ; Check that the path ends within the transfer
+    jsr path_ends
+    bcc @path_ok
+        lda #$100-ENAMETOOLONG
+    @path_ok:
+    rts
+
+.endproc
+
+; We have read a path, or part of a path, into fs_path
+; The size read is io_size
+; Check whether the path ends within the transfer
+; Return C clear if end of path (a zero byte) is found; C set if not
+.proc path_ends
+
+    lda #0
+    sta local_addr+0
+    ldy #<fs_path
+    lda #>fs_path
+    sta local_addr+1    ; local_addr+1 and Y form the address
+    lda io_size+1       ; Preserve io_size for two-part REU transfer
+    pha
+
+    ; Fail if io_size == 0
+    ora io_size+0
+    beq @fail
+
+    ; Set io_size+1:X to -io_size
+    ; We'll increment this and stop when we reach 0
+    sec
+    lda #0
+    sbc io_size+0
+    tax
+    lda #0
+    sbc io_size+1
+    sta io_size+1
+
+    @scan:
+        lda (local_addr),y      ; Pass if a zero byte is at the address
+        beq @pass
+        iny                     ; Add one to the address
+        bne :+
+            inc local_addr+1
+        :
+    inx                         ; Subtract one from the count
+    bne @scan
+    inc io_size+1
+    bne @scan
+    ; Check fails if loop runs to completion
+
+    @fail:
+    sec
+    pla
+    sta io_size+1
+    rts
+
+    @pass:
+    clc
+    pla
+    sta io_size+1
+    rts
+
+.endproc
+
+; Retrieve current path component and convert to 8.3 format
+; Return C clear if path component retrieved
+; Return C set and A == 0 if end of path reached
+; Return C set and A == -errno if invalid component found
+.proc get_path_part
+
+    ldy path_ptr+0
+    lda #0
+    sta path_ptr+0
+
+    ; Skip path separators
+    skip_separators:
+        lda (path_ptr),y
+        bne check_sep
+            ; End of path
+            sty path_ptr+0
+            lda #0
+            sec
+            rts
+        check_sep:
+        cmp #$2F
+        beq next_sep
+        cmp #$5C
+        bne start_path_part
+    next_sep:
+    iny
+    bne skip_separators
+    inc path_ptr+1
+    bne skip_separators
+    start_path_part:
+    sty path_ptr+0
+
+    ; Check for "." and ".." entries
+    ldy #0
+    lda (path_ptr),y
+    cmp #$2E
+    bne normal_name
+        ; '.' found
+        sta path_part+0
+        iny     ; Y == 1
+        lda (path_ptr),y
+        beq dot_name
+        cmp #$2E
+        beq double_dot
+        cmp #$2F
+        beq dot_name
+        cmp #$5C
+        beq dot_name
+        jmp bad_name
+    double_dot:
+        ; '..' found
+        sta path_part+1
+        iny     ; Y == 2
+        lda (path_ptr),y
+        beq dot_name
+        cmp #$2F
+        beq dot_name
+        cmp #$5C
+        beq dot_name
+        jmp bad_name
+    dot_name:
+        ; "." or ".." in path_part; Y == 1 or 2
+        lda #0
+        sta path_part,y
+        tya
+        clc
+        adc path_ptr+0
+        sta path_ptr+0
+        lda #0
+        adc path_ptr+1
+        sta path_ptr+1
+        clc
+        rts
+    normal_name:
+
+    ; Fill path_part with spaces
+    ldx #10
+    lda #$20
+    fill_loop:
+        sta path_part,x
+    dex
+    bpl fill_loop
+
+    ; Get the base part of the name
+    ldy path_ptr+0
+    lda #0
+    sta path_ptr+0
+    ldx #0  ; fs_path offset
+    name_loop:
+        lda (path_ptr),y
+        beq end_name
+        cmp #$2F
+        beq end_name
+        cmp #$5C
+        beq end_name
+        cmp #$2E
+        beq get_ext
+        sta path_part,x
+    iny
+    bne :+
+        inc path_ptr+1
+    :
+    inx
+    cpx #8
+    bcc name_loop
+
+    ; Skip any characters up to '.' or end of component
+    skip_name_loop:
+        lda (path_ptr),y
+        beq end_name
+        cmp #$2F
+        beq end_name
+        cmp #$5C
+        beq end_name
+        cmp #$2E
+        beq get_ext
+        tax
+        lda name_cvt,x
+        beq bad_name
+    iny
+    bne skip_name_loop
+    inc path_ptr+1
+    bne skip_name_loop
+
+    ; If a '.' was found, skip it and read the extension
+    get_ext:
+    iny
+    bne :+
+        inc path_ptr+1
+    :
+    ldx #8
+    ext_loop:
+        lda (path_ptr),y
+        beq end_name
+        cmp #$2F
+        beq end_name
+        cmp #$5C
+        beq end_name
+        sta path_part,x
+    iny
+    bne :+
+        inc path_ptr+1
+    :
+    inx
+    cpx #11
+    bcc ext_loop
+
+    ; Skip any characters up to end of component
+    skip_ext_loop:
+        lda (path_ptr),y
+        beq end_name
+        cmp #$2F
+        beq end_name
+        cmp #$5C
+        beq end_name
+        tax
+        lda name_cvt,x
+        beq bad_name
+    iny
+    bne skip_ext_loop
+    inc path_ptr+1
+    bne skip_ext_loop
+
+end_name:
+    sty path_ptr+0
+
+    ; Convert the path component to match its occurrence on the volume
+    ldx #10
+    conv_loop:
+        ldy path_part,x
+        lda name_cvt,y
+        beq bad_name
+        sta path_part,x
+    dex
+    bpl conv_loop
+
+    lda #0
+    clc
+    rts
+
+bad_name:
+    lda #$100-EINVAL
+    sec
+    rts
+
+.endproc
+
+; With file_data+filedata::dir_start and file_data+filedata::attributes set up,
+; search directory for name matching path_part.
+; If found, return C clear, entry in file_data, and dir_entry and lfn_entry set.
+; If not found, return C set and -ENOENT in A.
+; If I/O error, return C set and another errno in A.
+.proc find_entry
+
+    ; Must be seeking in a directory
+    lda file_data+filedata::attributes
+    and #ATTR_DIRECTORY
+    bne dir_ok
+        lda #$100-ENOTDIR
+        sec
+        rts
+    dir_ok:
+
+    ; Determine seek location for the enclosing directory
+    lda #0
+    sta file_data+filedata::dir_entry+0
+    sta file_data+filedata::lfn_entry+0
+    lda file_data+filedata::dir_start+0
+    ora file_data+filedata::dir_start+1
+    ora file_data+filedata::dir_start+2
+    ora file_data+filedata::dir_start+3
+    bne dir_is_cluster_chain
+
+        ; Enclosing directory is the root directory on a FAT12 or FAT16 volume.
+        ; This directory is contiguous, and appears before the cluster area.
+        lda fs_root_dir+0
+        sta file_data+filedata::dir_entry+1
+        sta file_data+filedata::lfn_entry+1
+        lda fs_root_dir+1
+        sta file_data+filedata::dir_entry+2
+        sta file_data+filedata::lfn_entry+2
+        lda fs_root_dir+2
+        sta file_data+filedata::dir_entry+3
+        sta file_data+filedata::lfn_entry+3
+        ; Size to search is the entire directory
+        ; Set as negative to simplify the loop
+        sec
+        lda #0
+        sbc fs_root_dir_size+0
+        sta dir_size+0
+        lda #0
+        sbc fs_root_dir_size+1
+        sta dir_size+1
+
+        ; Seek to start of root directory area
+        lda #$01
+        sta io_xfer+0
+        lda #DOS_CMD_FILE_SEEK
+        sta io_xfer+1
+        lda file_data+filedata::dir_entry+0
+        sta io_xfer+2
+        lda file_data+filedata::dir_entry+1
+        sta io_xfer+3
+        lda file_data+filedata::dir_entry+2
+        sta io_xfer+4
+        lda file_data+filedata::dir_entry+3
+        sta io_xfer+5
+        ldx #6
+        jsr do_command
+        lda io_xfer+256
+        cmp #'0'
+        bne @io_error
+
+        @search_dir:
+            ; Read one directory entry
+            jsr read_dir_entry
+            bcs @error
+            beq @dir_match
+
+        inc dir_size+0
+        bne @search_dir
+        inc dir_size+1
+        bne @search_dir
+
+        ; Return ENOENT
+        lda #$100-ENOENT
+        sec
+        rts
+
+    @io_error:
+        ; Return EIO
+        lda #$100-EIO
+    @error:
+        sec
+        rts
+
+    @dir_match:
+        clc
+        rts
+
+    dir_is_cluster_chain:
+
+        ; Enclosing directory is a cluster chain (root directory on FAT32, or
+        ; any other directory on any volume).
+        ; Set the starting cluster
+        lda file_data+filedata::dir_start+0
+        sta cluster+0
+        lda file_data+filedata::dir_start+1
+        sta cluster+1
+        lda file_data+filedata::dir_start+2
+        sta cluster+2
+
+        @search_cluster:
+            ; Convert cluster number to byte position
+            lda #0
+            sta file_data+filedata::dir_entry+0
+            lda cluster+0
+            sta file_data+filedata::dir_entry+1
+            lda cluster+1
+            sta file_data+filedata::dir_entry+2
+            lda cluster+2
+            sta file_data+filedata::dir_entry+3
+            ldx fs_cluster_shift
+            beq @end_shift
+            @shift:
+                asl file_data+filedata::dir_entry+1
+                rol file_data+filedata::dir_entry+2
+                rol a
+            dex
+            bne @shift
+            @end_shift:
+            sta file_data+filedata::dir_entry+3
+            ; Add the cluster base
+            clc
+            lda file_data+filedata::dir_entry+1
+            adc fs_cluster_base+0
+            sta file_data+filedata::dir_entry+1
+            lda file_data+filedata::dir_entry+2
+            adc fs_cluster_base+1
+            sta file_data+filedata::dir_entry+2
+            lda file_data+filedata::dir_entry+3
+            adc fs_cluster_base+2
+            sta file_data+filedata::dir_entry+3
+
+            ; Size to search is one cluster
+            ; fs_cluster_size is in 256 byte units; shift left by 3 to get count
+            ; of 32-byte directory entries
+            lda fs_cluster_size+0
+            sta dir_size+0
+            lda fs_cluster_size+1
+            sta dir_size+1
+            lda #0
+            .repeat 3
+                asl dir_size+0
+                rol dir_size+1
+                rol a
+            .endrep
+            sta dir_size+2
+            ; Make it negative, to simplify the loop
+            sec
+            lda #0
+            sbc dir_size+0
+            sta dir_size+0
+            lda #0
+            sbc dir_size+1
+            sta dir_size+1
+            lda #0
+            sbc dir_size+2
+            sta dir_size+2
+
+            ; If the last entry was not an LFN record, set the lfn_entry pointer
+            lda file_data+filedata::attributes
+            and #$3F
+            cmp #$0F
+            beq @lfn_1
+                lda file_data+filedata::dir_entry+0
+                sta file_data+filedata::lfn_entry+0
+                lda file_data+filedata::dir_entry+1
+                sta file_data+filedata::lfn_entry+1
+                lda file_data+filedata::dir_entry+2
+                sta file_data+filedata::lfn_entry+2
+                lda file_data+filedata::dir_entry+3
+                sta file_data+filedata::lfn_entry+3
+            @lfn_1:
+
+            ; Seek to start of root directory area
+            lda #$01
+            sta io_xfer+0
+            lda #DOS_CMD_FILE_SEEK
+            sta io_xfer+1
+            lda file_data+filedata::dir_entry+0
+            sta io_xfer+2
+            lda file_data+filedata::dir_entry+1
+            sta io_xfer+3
+            lda file_data+filedata::dir_entry+2
+            sta io_xfer+4
+            lda file_data+filedata::dir_entry+3
+            sta io_xfer+5
+            ldx #6
+            jsr do_command
+            lda io_xfer+256
+            cmp #'0'
+            bne @io_error
+
+            ; Search entries in the current cluster
+            @search_dir:
+                ; Read one directory entry
+                jsr read_dir_entry
+                bcs @error
+                beq @dir_match
+
+            inc dir_size+0
+            bne @search_dir
+            inc dir_size+1
+            bne @search_dir
+            inc dir_size+2
+            bne @search_dir
+
+            ; Get the next cluster
+
+            jsr next_cluster
+            jcc @search_cluster
+            sec
+            rts
+
+        @io_error:
+            lda #$100-EIO
+        @error:
+            sec
+            rts
+
+        @dir_match:
+            clc
+            rts
+
+.endproc
+
+; Read a directory entry and compare to the target name in path_part
+; If match: C clear, A == 0, Z set
+; If no match: C clear, A != 0, Z clear
+; If error: C set, error in A
+.proc read_dir_entry
+
+    ; Read 32 bytes
+    lda #$01
+    sta io_xfer+0
+    lda #DOS_CMD_READ_DATA
+    sta io_xfer+1
+    lda #32
+    sta io_xfer+2
+    lda #0
+    sta io_xfer+3
+    ldx #4
+    jsr do_command
+    cpy #0
+    beq io_ok
+        lda #$100-EIO
+        sec
+        rts
+    io_ok:
+
+    ; Check for empty entry
+    lda io_xfer+0
+    bne not_end
+        ; First byte is zero; this marks the end of the directory
+        lda #$100-ENOENT
+        sec
+        rts
+    not_end:
+    cmp #$E5
+    bne not_empty
+        ; Deleted directory entry; never match, but continue searching
+        jmp no_match
+    not_empty:
+
+    ; Is this an LFN entry?
+    lda io_xfer+filedata::attributes
+    and #$3F
+    cmp #$0F
+    bne not_lfn
+        ; LFN entry. Never match on this.
+        ; Set attributes byte to indicate LFN entry
+        sta file_data+filedata::attributes
+        ; Advance dir_entry but not lfn_entry
+        clc
+        lda file_data+filedata::dir_entry+0
+        adc #32
+        sta file_data+filedata::dir_entry+0
+        bcc :+
+        inc file_data+filedata::dir_entry+1
+        bne :+
+        inc file_data+filedata::dir_entry+2
+        bne :+
+        inc file_data+filedata::dir_entry+3
+        :
+        lda #$FF
+        clc
+        rts
+    not_lfn:
+
+    ; This is a matchable directory entry
+    ; Compare to path_part
+    ldx #10
+    compare:
+        lda io_xfer,x
+        cmp path_part,x
+        bne no_match
+    dex
+    bpl compare
+
+    ; The entry matches. Copy to file_data
+    ldx #31
+    copy:
+        lda io_xfer,x
+        sta file_data,x
+    dex
+    bpl copy
+
+    lda #0
+    clc
+    rts
+
+    ; Come here if deleted directory entry or if name does not match
+no_match:
+    lda #0
+    sta file_data+filedata::attributes ; not LFN entry and not directory
+    clc
+    lda file_data+filedata::dir_entry+0
+    adc #32
+    sta file_data+filedata::dir_entry+0
+    bcc :+
+    inc file_data+filedata::dir_entry+1
+    bne :+
+    inc file_data+filedata::dir_entry+2
+    bne :+
+    inc file_data+filedata::dir_entry+3
+    :
+    lda file_data+filedata::dir_entry+0
+    sta file_data+filedata::lfn_entry+0
+    lda file_data+filedata::dir_entry+1
+    sta file_data+filedata::lfn_entry+1
+    lda file_data+filedata::dir_entry+2
+    sta file_data+filedata::lfn_entry+2
+    lda file_data+filedata::dir_entry+3
+    sta file_data+filedata::lfn_entry+3
+    lda #$FF
+    clc
+    rts
+
+.endproc
+
+; Given the current cluster number in "cluster", find the next cluster in
+; the chain.
+; If new cluster found: Return C clear.
+; If end of chain: Return C set and ENOENT in A.
+; If I/O error: Return C set and other error in A.
+.proc next_cluster
+
+    ; Set up seek command
+    lda #$01
+    sta io_xfer+0
+    lda #DOS_CMD_FILE_SEEK
+    sta io_xfer+1
+
+    ; Follow according to the file system type
+    lda fs_type
+    cmp #12
+    beq fat_12
+    cmp #16
+    jeq fat_16
+    cmp #32
+    jeq fat_32
+io_error:
+    lda #$100-EIO
+    sec
+    rts
+
+fat_12:
+    ; cluster + (cluster >> 1)
+    lda cluster+1
+    lsr a
+    sta io_xfer+3
+    lda cluster+0
+    ror a
+    sta io_xfer+2
+    clc
+    lda cluster+0
+    adc io_xfer+2
+    sta io_xfer+2
+    lda cluster+1
+    adc io_xfer+3
+
+    ; Add fs_first_fat
+    clc
+    adc fs_first_fat+0
+    sta io_xfer+3
+    lda fs_first_fat+1
+    adc #0
+    sta io_xfer+4
+    lda fs_first_fat+2
+    adc #0
+    sta io_xfer+5
+
+    ; Seek to that position
+    ldx #6
+    jsr do_command
+    lda io_xfer+256
+    cmp #'0'
+    jne io_error
+
+    ; Read two bytes
+    lda #$01
+    sta io_xfer+0
+    lda #DOS_CMD_READ_DATA
+    sta io_xfer+1
+    lda #2
+    sta io_xfer+2
+    lda #0
+    sta io_xfer+3
+    ldx #4
+    jsr do_command
+    cpy #0
+    jne io_error
+
+    ; Select entry according to bit 0 of cluster number
+    lda #0
+    sta cluster+2
+    lda cluster+0
+    lsr a
+    lda io_xfer+0
+    sta cluster+0
+    lda io_xfer+1
+    bcs odd_cluster
+        ; Even cluster number
+        and #$0F
+        sta cluster+1
+        jmp check_cluster
+    odd_cluster:
+        ; Odd cluster number
+        .repeat 4
+            lsr a
+            ror cluster+0
+        .endrep
+        sta cluster+1
+        jmp check_cluster
+
+fat_16:
+    ; cluster << 1
+    lda cluster+0
+    asl a
+    sta io_xfer+2
+    lda cluster+1
+    rol a
+    sta io_xfer+3
+    lda #0
+    rol a
+    sta io_xfer+4
+
+    ; Add fs_first_fat
+    clc
+    lda io_xfer+3
+    adc fs_first_fat+0
+    sta io_xfer+3
+    lda io_xfer+4
+    adc fs_first_fat+1
+    sta io_xfer+4
+    lda #0
+    adc fs_first_fat+2
+    sta io_xfer+5
+
+    ; Seek to that position
+    ldx #6
+    jsr do_command
+    lda io_xfer+256
+    cmp #'0'
+    jne io_error
+
+    ; Read two bytes
+    lda #$01
+    sta io_xfer+0
+    lda #DOS_CMD_READ_DATA
+    sta io_xfer+1
+    lda #2
+    sta io_xfer+2
+    lda #0
+    sta io_xfer+3
+    ldx #4
+    jsr do_command
+    cpy #0
+    jne io_error
+
+    ; Update cluster number
+    lda io_xfer+0
+    sta cluster+0
+    lda io_xfer+1
+    sta cluster+1
+    lda #0
+    sta cluster+2
+    jmp check_cluster
+
+fat_32:
+    ; cluster << 2
+    lda cluster+0
+    asl a
+    sta io_xfer+2
+    lda cluster+1
+    rol a
+    sta io_xfer+3
+    lda #0
+    rol a
+    asl io_xfer+2
+    rol io_xfer+3
+    rol a
+    sta io_xfer+4
+
+    ; Add fs_first_fat or fs_second_fat
+    lda fs_ext_flags
+    cmp #$81
+    bcs second_fat
+        clc
+        lda io_xfer+3
+        adc fs_first_fat+0
+        sta io_xfer+3
+        lda io_xfer+4
+        adc fs_first_fat+1
+        sta io_xfer+4
+        lda #0
+        adc fs_first_fat+2
+        sta io_xfer+5
+        jmp seek
+    second_fat:
+        clc
+        lda io_xfer+3
+        adc fs_second_fat+0
+        sta io_xfer+3
+        lda io_xfer+4
+        adc fs_second_fat+1
+        sta io_xfer+4
+        lda #0
+        adc fs_second_fat+2
+        sta io_xfer+5
+    seek:
+
+    ; Seek to that position
+    ldx #6
+    jsr do_command
+    lda io_xfer+256
+    cmp #'0'
+    jne io_error
+
+    ; Read four bytes
+    lda #$01
+    sta io_xfer+0
+    lda #DOS_CMD_READ_DATA
+    sta io_xfer+1
+    lda #4
+    sta io_xfer+2
+    lda #0
+    sta io_xfer+3
+    ldx #4
+    jsr do_command
+    cpy #0
+    jne io_error
+
+    ; Update cluster number
+    lda io_xfer+0
+    sta cluster+0
+    lda io_xfer+1
+    sta cluster+1
+    lda io_xfer+2
+    sta cluster+2
+    lda io_xfer+3
+    and #$0F        ; It really should be called FAT28
+    bne bad_cluster
+
+check_cluster:
+    ; New cluster must be at least two
+    lda cluster+0
+    cmp #2
+    lda cluster+1
+    sbc #0
+    lda cluster+2
+    sbc #0
+    bcc bad_cluster
+
+    ; New cluster must be within the file system
+    lda cluster+0
+    cmp fs_clusters+0
+    lda cluster+1
+    sbc fs_clusters+1
+    lda cluster+2
+    sbc fs_clusters+2
+    bcs bad_cluster
+
+    ; New cluster is found
+    clc
+    rts
+
+bad_cluster:
+    lda #$100-ENOENT
+    sec
+    rts
+
+.endproc
+
+.proc dump_dir_entry
+
+    ldx #<name_label
+    ldy #>name_label
+    jsr print_string
+    .repeat 11,i
+        lda file_data+filedata::name+i
+        jsr CHROUT
+    .endrep
+    ldx #<name_tail
+    ldy #>name_tail
+    jsr print_string
+
+    ldx #<attr_label
+    ldy #>attr_label
+    jsr print_string
+    lda file_data+filedata::attributes
+    jsr print_byte
+    lda #$0D
+    jsr CHROUT
+
+    ldx #<cluster_label
+    ldy #>cluster_label
+    jsr print_string
+    lda file_data+filedata::cluster_hi+1
+    jsr print_byte
+    lda file_data+filedata::cluster_hi+0
+    jsr print_byte
+    lda file_data+filedata::cluster_lo+1
+    jsr print_byte
+    lda file_data+filedata::cluster_lo+0
+    jsr print_byte
+    lda #$0D
+    jsr CHROUT
+
+    ldx #<size_label
+    ldy #>size_label
+    jsr print_string
+    lda file_data+filedata::size+3
+    jsr print_byte
+    lda file_data+filedata::size+2
+    jsr print_byte
+    lda file_data+filedata::size+1
+    jsr print_byte
+    lda file_data+filedata::size+0
+    jsr print_byte
+    lda #$0D
+    jsr CHROUT
+
+    ldx #<dir_entry_label
+    ldy #>dir_entry_label
+    jsr print_string
+    lda file_data+filedata::dir_entry+3
+    jsr print_byte
+    lda file_data+filedata::dir_entry+2
+    jsr print_byte
+    lda file_data+filedata::dir_entry+1
+    jsr print_byte
+    lda file_data+filedata::dir_entry+0
+    jsr print_byte
+    lda #$0D
+    jsr CHROUT
+
+    ldx #<lfn_entry_label
+    ldy #>lfn_entry_label
+    jsr print_string
+    lda file_data+filedata::lfn_entry+3
+    jsr print_byte
+    lda file_data+filedata::lfn_entry+2
+    jsr print_byte
+    lda file_data+filedata::lfn_entry+1
+    jsr print_byte
+    lda file_data+filedata::lfn_entry+0
+    jsr print_byte
+    lda #$0D
+    jsr CHROUT
+
+    rts
+
+name_label:
+    .byte "name=", $22, 0
+name_tail:
+    .byte $22, $0D, 0
+attr_label:
+    .asciiz "attributes="
+cluster_label:
+    .asciiz "cluster="
+size_label:
+    .asciiz "size="
+dir_entry_label:
+    .asciiz "dir_entry="
+lfn_entry_label:
+    .asciiz "lfn_entry="
+
+.endproc
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ; For debugging
@@ -1857,16 +3554,16 @@ title_info_sector: .asciiz "fs_info_sector="
 ; Print string at Y:X
 .proc print_string
 
-    stx local_addr+0
-    sty local_addr+1
+    stx local_addr2+0
+    sty local_addr2+1
     @print:
         ldy #0
-        lda (local_addr),y
+        lda (local_addr2),y
         beq @end_print
         jsr CHROUT
-    inc local_addr+0
+    inc local_addr2+0
     bne @print
-    inc local_addr+1
+    inc local_addr2+1
     bne @print
     @end_print:
     rts
@@ -1979,3 +3676,24 @@ ascii_to_pet:
     .repeat 133,i
         .byte i+$7B
     .endrep
+
+; Conversion table for characters in short file names
+; 0 indicates an invalid character
+; Otherwise, convert lower to upper case and replace $E5 with $05
+name_cvt:
+    .byte   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0
+    .byte   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0
+    .byte $20,$21,  0,$23,$24,$25,$26,$27,$28,$29,  0,  0,  0,$2D,  0,  0
+    .byte $30,$31,$32,$33,$34,$35,$36,$37,$38,$39,  0,  0,  0,  0,  0,  0
+    .byte $40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$4A,$4B,$4C,$4D,$4E,$4F
+    .byte $50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$5A,  0,  0,  0,$5E,$5F
+    .byte $60,$41,$42,$43,$44,$45,$46,$47,$48,$49,$4A,$4B,$4C,$4D,$4E,$4F
+    .byte $50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$5A,$7B,  0,$7D,$7E,  0
+    .byte $80,$81,$82,$83,$84,$85,$86,$87,$88,$89,$8A,$8B,$8C,$8D,$8E,$8F
+    .byte $90,$91,$92,$93,$94,$95,$96,$97,$98,$99,$9A,$9B,$9C,$9D,$9E,$9F
+    .byte $A0,$A1,$A2,$A3,$A4,$A5,$A6,$A7,$A8,$A9,$AA,$AB,$AC,$AD,$AE,$AF
+    .byte $B0,$B1,$B2,$B3,$B4,$B5,$B6,$B7,$B8,$B9,$BA,$BB,$BC,$BD,$BE,$BF
+    .byte $C0,$C1,$C2,$C3,$C4,$C5,$C6,$C7,$C8,$C9,$CA,$CB,$CC,$CD,$CE,$CF
+    .byte $D0,$D1,$D2,$D3,$D4,$D5,$D6,$D7,$D8,$D9,$DA,$DB,$DC,$DD,$DE,$DF
+    .byte $E0,$E1,$E2,$E3,$E4,$05,$E6,$E7,$E8,$E9,$EA,$EB,$EC,$ED,$EE,$EF
+    .byte $F0,$F1,$F2,$F3,$F4,$F5,$F6,$F7,$F8,$F9,$FA,$FB,$FC,$FD,$FE,$FF

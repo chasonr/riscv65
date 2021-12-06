@@ -1513,20 +1513,20 @@ ecall_04:
     .word bad_ecall        ; 1150
     .word bad_ecall        ; 1151
 
-; Unpopulated system calls
+; System calls supported by Newlib
 
 SYS_faccessat    = bad_ecall
 SYS_openat       = bad_ecall
 .import SYS_close
 SYS_lseek        = bad_ecall
-SYS_read         = bad_ecall
+.import SYS_read
 .import SYS_write
 SYS_fstatat      = bad_ecall
 .import SYS_fstat
 SYS_exit         = _RISCV_exit
 .import SYS_gettimeofday
 .import SYS_brk
-SYS_open         = bad_ecall
+.import SYS_open
 .import SYS_link
 SYS_unlink       = bad_ecall
 SYS_access       = bad_ecall
