@@ -218,6 +218,19 @@ DOS_CMD_GET_TIME  = $26
     jsr init_fs
     ;jsr dump_fs_params
 
+    ; Mark files as closed
+    ldx #MAX_FILES-1
+    lda #0
+    sta local_addr+0
+    @mark_closed:
+        ldy open_files_lo,x
+        lda open_files_hi,x
+        sta local_addr+1
+        lda #0
+        sta (local_addr),y
+    dex
+    bpl @mark_closed
+
     rts
 
 .endproc
