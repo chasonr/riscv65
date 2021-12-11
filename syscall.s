@@ -294,7 +294,330 @@ bad_file:
 
 .endproc
 
-; SYS_lseek        = bad_ecall
+; Seek to a position in a file
+; A0 = file handle
+; A1 = seek position
+; A2 = 0 (SEEK_SET) to seek from beginning
+;      1 (SEEK_CUR) to seek from current position
+;      2 (SEEK_END) to seek from the end
+
+.global SYS_lseek
+.proc SYS_lseek
+
+    ; Handle must refer to an open file
+    lda _RISCV_ireg_1+REG_a0
+    ora _RISCV_ireg_2+REG_a0
+    ora _RISCV_ireg_3+REG_a0
+    bne bad_file
+    lda _RISCV_ireg_0+REG_a0
+    sec
+    sbc #3
+    bcs file_ok_1
+        set_errno ESPIPE
+        rts
+    file_ok_1:
+    cmp #MAX_FILES
+    bcs bad_file
+
+    sta file_handle
+
+    ; Build pointer to open_files
+    tax
+    lda open_files_lo,x
+    sta local_addr+0
+    lda open_files_hi,x
+    sta local_addr+1
+
+    ; Check that the file is open
+    ldy #0
+    lda (local_addr),y
+    bne file_ok_2       ; Else file is not open
+    bad_file:
+        set_errno EBADF
+        rts
+    file_ok_2:
+
+    ; Get the origin from which the seek shall be done
+    lda _RISCV_ireg_1+REG_a2
+    ora _RISCV_ireg_2+REG_a2
+    ora _RISCV_ireg_3+REG_a2
+    bne bad_param
+    ldx _RISCV_ireg_0+REG_a2
+    bne check_1
+        ; 0 (SEEK_SET)
+        lda #0
+        sta seek_location+0
+        sta seek_location+1
+        sta seek_location+2
+        sta seek_location+3
+        beq have_origin
+    check_1:
+    dex
+    bne check_2
+        ; 1 (SEEK_CUR)
+        ; Read current cluster number
+        ldy #filedata::cluster_pos
+        lda (local_addr),y
+        sta seek_location+1
+        iny
+        lda (local_addr),y
+        sta seek_location+2
+        iny
+        lda (local_addr),y
+        ; Convert to byte offset
+        ldx fs_cluster_shift
+        beq @end_shift
+        @shift:
+            asl seek_location+1
+            rol seek_location+2
+            rol a
+        dex
+        bne @shift
+        @end_shift:
+        sta seek_location+3
+        ; Add the offset within the cluster
+        ldy #filedata::cluster_ptr
+        lda (local_addr),y
+        sta seek_location+0
+        iny
+        clc
+        lda (local_addr),y
+        adc seek_location+1
+        sta seek_location+1
+        iny
+        lda (local_addr),y
+        adc seek_location+2
+        sta seek_location+2
+        lda #0
+        adc seek_location+3
+        sta seek_location+3
+        jmp have_origin
+    check_2:
+    dex
+    bne bad_param
+        ; 2 (SEEK_END)
+        ldy #filedata::size
+        lda (local_addr),y
+        sta seek_location+0
+        iny
+        lda (local_addr),y
+        sta seek_location+1
+        iny
+        lda (local_addr),y
+        sta seek_location+2
+        iny
+        lda (local_addr),y
+        sta seek_location+3
+        jmp have_origin
+    bad_param:
+        set_errno EINVAL
+        rts
+    have_origin:
+
+    ; Sign-extend the offset to 5 bytes.
+    ; Treat the offset as signed and the position as unsigned.
+    lda _RISCV_ireg_3+REG_a1
+    asl a
+    lda #0
+    adc #$FF
+    eor #$FF
+    tax
+
+    ; Add the offset to the position
+    clc
+    lda _RISCV_ireg_0+REG_a1
+    adc seek_location+0
+    sta seek_location+0
+    lda _RISCV_ireg_1+REG_a1
+    adc seek_location+1
+    sta seek_location+1
+    lda _RISCV_ireg_2+REG_a1
+    adc seek_location+2
+    sta seek_location+2
+    lda _RISCV_ireg_3+REG_a1
+    adc seek_location+3
+    sta seek_location+3
+    txa
+    adc #0
+    bne bad_param ; Add overflowed
+
+    ; Does the seek location exceed the size of the file?
+    ldy #filedata::size
+    lda (local_addr),y
+    cmp seek_location+0
+    iny
+    lda (local_addr),y
+    sbc seek_location+1
+    iny
+    lda (local_addr),y
+    sbc seek_location+2
+    iny
+    lda (local_addr),y
+    sbc seek_location+3
+    bcc bad_param ; Else seek beyond end of file
+
+    ; Determine the cluster number of the seek position
+    lda seek_location+1
+    sta seek_cluster+0
+    lda seek_location+2
+    sta seek_cluster+1
+    lda seek_location+3
+    ldx fs_cluster_shift
+    beq @end_shift
+    @shift:
+        lsr a
+        ror seek_cluster+1
+        ror seek_cluster+0
+    dex
+    bne @shift
+    @end_shift:
+    sta seek_cluster+2
+
+    ; If the target cluster number is less than the current one, seek from the
+    ; beginning. Otherwise, seek from the current cluster.
+
+    ldy #filedata::cluster_pos
+    lda seek_cluster+0
+    cmp (local_addr),y
+    iny
+    lda seek_cluster+1
+    sbc (local_addr),y
+    iny
+    lda seek_cluster+2
+    sbc (local_addr),y
+    bcs seek_from_current
+        ; Begin following the cluster chain from the start
+        ldy #filedata::cluster_lo+0
+        lda (local_addr),y
+        sta cluster+0
+        ldy #filedata::cluster_lo+1
+        lda (local_addr),y
+        sta cluster+1
+        ldy #filedata::cluster_hi+0
+        lda (local_addr),y
+        sta cluster+2
+        ; Negative of cluster pointer count
+        sec
+        lda #0
+        sbc seek_cluster+0
+        sta seek_count+0
+        lda #0
+        sbc seek_cluster+1
+        sta seek_count+1
+        lda #0
+        sbc seek_cluster+2
+        sta seek_count+2
+    jmp have_start_cluster
+    seek_from_current:
+        ldy #filedata::current_cluster
+        lda (local_addr),y
+        sta cluster+0
+        iny
+        lda (local_addr),y
+        sta cluster+1
+        iny
+        lda (local_addr),y
+        sta cluster+2
+        ; Negative of cluster pointer count
+        sec
+        ldy #filedata::cluster_pos
+        lda (local_addr),y
+        sbc seek_cluster+0
+        sta seek_count+0
+        iny
+        lda (local_addr),y
+        sbc seek_cluster+1
+        sta seek_count+1
+        iny
+        lda (local_addr),y
+        sbc seek_cluster+2
+        sta seek_count+2
+    have_start_cluster:
+
+    ; Follow the cluster chain from the current position
+    lda seek_count+0
+    ora seek_count+1
+    ora seek_count+2
+    beq end_cluster_loop
+    cluster_loop:
+
+        jsr next_cluster
+        bcs io_error
+
+    ; seek_count is negative, to simplify this count
+    inc seek_count+0
+    bne cluster_loop
+    inc seek_count+1
+    bne cluster_loop
+    inc seek_count+2
+    bne cluster_loop
+    end_cluster_loop:
+
+    ; Set the current position
+    ldy #filedata::current_cluster
+    lda cluster+0
+    sta (local_addr),y
+    iny
+    lda cluster+1
+    sta (local_addr),y
+    iny
+    lda cluster+2
+    sta (local_addr),y
+    ldy #filedata::cluster_pos
+    lda seek_cluster+0
+    sta (local_addr),y
+    iny
+    lda seek_cluster+1
+    sta (local_addr),y
+    iny
+    lda seek_cluster+2
+    sta (local_addr),y
+    ldy fs_cluster_size+1
+    ldx fs_cluster_size+0
+    bne :+
+        dey
+    :
+    dex
+    tya
+    and seek_location+2
+    ldy #filedata::cluster_ptr+2
+    sta (local_addr),y
+    dey
+    txa
+    and seek_location+1
+    sta (local_addr),y
+    dey
+    lda seek_location+0
+    sta (local_addr),y
+
+    ; Return the new file position
+    lda seek_location+0
+    sta _RISCV_ireg_0+REG_a0
+    lda seek_location+1
+    sta _RISCV_ireg_1+REG_a0
+    lda seek_location+2
+    sta _RISCV_ireg_2+REG_a0
+    lda seek_location+3
+    sta _RISCV_ireg_3+REG_a0
+    rts
+
+io_error:
+    ; error code in A
+    sta _RISCV_ireg_0+REG_a0
+    lda #$FF
+    sta _RISCV_ireg_1+REG_a0
+    sta _RISCV_ireg_2+REG_a0
+    sta _RISCV_ireg_3+REG_a0
+    rts
+
+.endproc
+
+.bss
+seek_count: .res 3
+seek_cluster: .res 3
+seek_location: .res 4
+
+.code
 
 ; Read from the given file handle
 ; A0 = file handle

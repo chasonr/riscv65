@@ -1518,7 +1518,7 @@ ecall_04:
 SYS_faccessat    = bad_ecall
 SYS_openat       = bad_ecall
 .import SYS_close
-SYS_lseek        = bad_ecall
+.import SYS_lseek
 .import SYS_read
 .import SYS_write
 SYS_fstatat      = bad_ecall
