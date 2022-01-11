@@ -116,6 +116,7 @@ zp_save: .res zp_size
 
 .import _RISCV_api_init
 .import _RISCV_syscall_init
+.import _RISCV_syscall_exit
 .import _RISCV_fetch
 .import _RISCV_read_8
 .import _RISCV_read_16
@@ -152,6 +153,9 @@ zp_save: .res zp_size
 ; Jump here from anywhere to exit the program
 .global _RISCV_exit
 .proc _RISCV_exit
+
+    ; Shut down the file system
+    jsr _RISCV_syscall_exit
 
     ; Reset the stack pointer
     ; Assumes the structure of the BASIC interpreter

@@ -659,7 +659,7 @@ main(void)
         goto bad_program;
     }
 
-    if (!dos_open(1, FILESYSTEM, FA_READ)) {
+    if (!dos_open(1, FILESYSTEM, FA_READ|FA_WRITE)) {
         goto bad_filesystem;
     }
 

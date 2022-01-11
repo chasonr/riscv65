@@ -9,12 +9,13 @@ int
 main(void)
 {
     static const char path[] = "/dir.1/dir.2/test.txt";
-    int fd = open(path, 0, 0);
+    int x;
+    int fd = open(path, O_RDONLY, 0);
     printf("len=%u open returns: %d\n", (unsigned)strlen(path), fd);
 
     // Seek forward, from end
     long pos = lseek(fd, -60000, SEEK_END);
-    int x = errno;
+    x = errno;
     printf("pos=%ld\n", pos);
     errno = x;
     if (pos == -1) {
@@ -49,6 +50,59 @@ main(void)
     len = read(fd, buf, sizeof(buf));
     printf("Sample: %.*s\n", (int)len, buf);
 
+    int fd2;
+    static const char path2[] = "/dir.1/dir.2/test-2.txt";
+    fd2 = open(path2, O_RDWR | O_CREAT, 0644);
+    x = errno;
+    printf("fd2=%d\n", fd2);
+    errno = x;
+    if (fd2 < 0) {
+        perror(path2);
+    }
+    close(fd2);
+
+    // This is supposed to fail
+    fd2 = open(path, O_RDWR | O_CREAT | O_EXCL, 0644);
+    x = errno;
+    printf("fd2=%d\n", fd2);
+    errno = x;
+    if (fd2 < 0) {
+        perror(path);
+    }
+    close(fd2);
+
+    // This should also fail: the file is already open
+    fd2 = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
+    x = errno;
+    printf("fd2=%d\n", fd2);
+    errno = x;
+    if (fd2 < 0) {
+        perror(path);
+    }
+    close(fd2);
+
+    // This should succeed
+    fd2 = open(path, O_RDONLY, 0);
+    x = errno;
+    printf("fd2=%d\n", fd2);
+    errno = x;
+    if (fd2 < 0) {
+        perror(path);
+    }
+    close(fd2);
+
+    close(fd);
+
+    // This should succeed, and truncate the file
+    fd2 = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
+    x = errno;
+    printf("fd2=%d\n", fd2);
+    errno = x;
+    if (fd2 < 0) {
+        perror(path);
+    }
+    close(fd2);
+
 #if 0
     if (fd >= 0) {
         char buf[1024];
@@ -72,8 +126,6 @@ main(void)
         perror(path);
     }
 #endif
-
-    close(fd);
 
     return 0;
 }
