@@ -4,6 +4,10 @@
 
 ---
 
+**⸢ [Building] ⸥**
+
+---
+
 ## Concept
 
 **The idea is to trade speed for program / data size.**
@@ -21,3 +25,8 @@ then loads a **RISC-V** interpreter to run it.
 
 The interpreter provides a set of system <br>
 calls for the target to interact with  files.
+
+
+<!----------------------------------------------------------------------------->
+
+[Building]: toolchain/README.md
