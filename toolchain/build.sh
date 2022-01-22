@@ -19,7 +19,7 @@ tar xvf binutils-${BINUTILS_VERSION}.tar.xz
 patch -p0 -i binutils.patch
 mkdir build-binutils
 cd build-binutils
-../binutils-2.37/configure --prefix=$HOME/riscv-gcc --target=riscv-elf \
+../binutils-${BINUTILS_VERSION}/configure --prefix=$HOME/riscv-gcc --target=riscv-elf \
     --with-sysroot --disable-nls --disable-werror
 make
 make install
@@ -28,7 +28,7 @@ cd ..
 tar xvf gcc-${GCC_VERSION}.tar.xz
 mkdir build-gcc
 cd build-gcc
-../gcc-11.2.0/configure --target=riscv-elf --prefix=$HOME/riscv-gcc \
+../gcc-${GCC_VERSION}/configure --target=riscv-elf --prefix=$HOME/riscv-gcc \
     --disable-nls --enable-languages=c,c++ --without-headers \
     --with-abi=ilp32 --with-arch=rv32im
 make all-gcc all-target-libgcc
@@ -38,7 +38,7 @@ cd ..
 tar xvf newlib-${NEWLIB_VERSION}.tar.gz
 mkdir build-newlib
 cd build-newlib
-../newlib-4.1.0/configure --prefix=$HOME/riscv-gcc --target=riscv-elf
+../newlib-${NEWLIB_VERSION}/configure --prefix=$HOME/riscv-gcc --target=riscv-elf
 make
 make install
 cd ..
