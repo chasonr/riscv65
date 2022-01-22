@@ -1,11 +1,33 @@
-This directory contains the script needed to build the RISC-V toolchain and a patch for binutils so that the linker will link the binary as riscv65 requires.
 
-You need these archives to build the toolchain:
+# Toolchain
 
-* binutils-2.37.tar.xz
-* gcc-11.2.0.tar.xz
-* newlib-4.1.0.tar.gz
+The [`build.sh`] script not only compiles the <br>
+**RISC-V** toolchain but also patches for **binutils**, <br>
+instructing the linker as **RISC-V 65** requires.
 
-Building GCC requires the development packages for GMP, MPFR and MPC.
+<br>
 
-Once the toolchain is built, you will need to add $HOME/riscv-gcc to your PATH.
+## Requirements
+
+- `binutils-2.37.tar.xz`
+
+- `newlib-4.1.0.tar.gz`
+
+- `gcc-11.2.0.tar.xz`
+
+    *GCC also requires these packages.*
+    - `GMP`
+    - `MPFR`
+    - `MPC`
+
+<br>
+
+## Path
+
+Once the toolchain has built, you will need <br>
+to add `$HOME/riscv-gcc` to your **PATH**.
+
+
+<!----------------------------------------------------------------------------->
+
+[`build.sh`]: build.sh
