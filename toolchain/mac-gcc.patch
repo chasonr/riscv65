@@ -1,0 +1,14 @@
+diff -U 3 -r gcc-11.2.0/gcc/config.host gcc-11.2.0-mac/gcc/config.host
+--- gcc-11.2.0/gcc/config.host	2021-07-28 02:55:07.000000000 -0400
++++ gcc-11.2.0-mac/gcc/config.host	2022-01-26 16:01:08.000000000 -0500
+@@ -93,8 +93,8 @@
+ case ${host} in
+   *-darwin*)
+     # Generic darwin host support.
+-    out_host_hook_obj=host-darwin.o
+-    host_xmake_file="${host_xmake_file} x-darwin"
++    # out_host_hook_obj=host-darwin.o
++    # host_xmake_file="${host_xmake_file} x-darwin"
+     ;;
+ esac
+ 

@@ -4,6 +4,11 @@ PREFIX=$HOME/riscv-gcc
 TARGET=riscv-elf
 
 export PATH=$PREFIX/bin:$PATH
+if [ "`uname`" == "Darwin" ]; then
+    export C_INCLUDE_PATH=`brew --prefix`/include
+    export CPLUS_INCLUDE_PATH=`brew --prefix`/include
+    export LIBRARY_PATH=`brew --prefix`/lib
+fi
 
 BINUTILS_VERSION=2.37
 GCC_VERSION=11.2.0
@@ -26,6 +31,9 @@ make install
 cd ..
 
 tar xvf gcc-${GCC_VERSION}.tar.xz
+if [ "`uname`" == "Darwin" ]; then
+    patch -p0 -i mac-gcc.patch
+fi
 mkdir build-gcc
 cd build-gcc
 ../gcc-${GCC_VERSION}/configure --target=riscv-elf --prefix=$HOME/riscv-gcc \
