@@ -310,8 +310,13 @@ DOS_CMD_GET_TIME   = $26
         beq bad_file        ; File was not open
 
         ; If file was open for writing, update the directory entry
-        jsr write_dir_entry
-        sta _RISCV_ireg_0+REG_a0
+        ldy #filedata::open_flags+0
+        lda (local_addr),y
+        and #O_ACCMODE
+        beq end_update
+            jsr write_dir_entry
+        end_update:
+        sta _RISCV_ireg_0+REG_a0 ; always 0 if O_ACCMODE
 
         ; Mark the file as closed
         lda #0
