@@ -259,6 +259,36 @@ DOS_CMD_GET_TIME   = $26
 .global _RISCV_syscall_exit
 .proc _RISCV_syscall_exit
 
+    ; Close all open files
+    lda #MAX_FILES-1
+    sta file_handle
+    close_loop:
+
+        ; Set the pointer to the file information block
+        ldx file_handle
+        lda open_files_lo,x
+        sta local_addr+0
+        lda open_files_hi,x
+        sta local_addr+1
+
+        ; Is the file open?
+        ldy #0
+        lda (local_addr),y
+        beq end_close_loop
+
+        ; Is the file open for writing?
+        ldy #filedata::open_flags
+        lda (local_addr),y
+        and #O_ACCMODE
+        beq end_close_loop
+
+        ; Write the directory entry; disregard errors
+        jsr write_dir_entry
+
+    end_close_loop:
+    dec file_handle
+    bpl close_loop
+
     ; Close the volume
     lda #ULTIDOS_TARGET
     sta CMD_DATA
