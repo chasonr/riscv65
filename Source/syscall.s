@@ -4100,6 +4100,9 @@ bad_cluster:
 ; Return C set if error, and -errno in A
 .proc write_dir_entry
 
+    ; Update the modification time
+    jsr set_mtime
+
     ; Seek to the location of the directory entry
     ldy #filedata::dir_entry
     lda (local_addr),y
