@@ -310,14 +310,6 @@ DOS_CMD_GET_TIME   = $26
         beq bad_file        ; File was not open
 
         ; If file was open for writing, update the directory entry
-        ;;;;
-        lda local_addr+1
-        jsr print_byte
-        lda local_addr+0
-        jsr print_byte
-        lda #$0D
-        jsr CHROUT
-        ;;;;
         jsr write_dir_entry
         sta _RISCV_ireg_0+REG_a0
 
@@ -4054,22 +4046,6 @@ bad_cluster:
 
     ; Repeat until read_fat_entry returns an error
     delete_loop:
-        ;;;;
-        lda #$01
-        jsr print_byte
-        lda #$20
-        jsr CHROUT
-        lda cluster+3
-        jsr print_byte
-        lda cluster+2
-        jsr print_byte
-        lda cluster+1
-        jsr print_byte
-        lda cluster+0
-        jsr print_byte
-        lda #$0D
-        jsr CHROUT
-        ;;;;
         ; Read the FAT entry
         lda cluster+0
         sta cluster_num+0
@@ -4103,17 +4079,6 @@ bad_cluster:
     jcc delete_loop
 
     end_delete:
-    ;;;;
-    pha
-    lda #'>'
-    jsr CHROUT
-    pla
-    pha
-    jsr print_byte
-    lda #$0D
-    jsr CHROUT
-    pla
-    ;;;;
     ; ENOENT just means we reached the end of the chain
     cmp #$100-ENOENT
     bne real_error
