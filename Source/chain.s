@@ -1,12 +1,9 @@
 ; chain.s -- very short program to load and run riscv65
 
+.include "kernal.inc"
+
 ; Load from this device
 DEVICE = 8
-
-; Kernal entry points
-LOAD = $FFD5
-SETLFS = $FFBA
-SETNAM = $FFBD
 
 .org $02A7
 
