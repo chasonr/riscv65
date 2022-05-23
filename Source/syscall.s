@@ -743,14 +743,36 @@ lseek_location: .res 4
     bne bad_file
     lda _RISCV_ireg_0+REG_a0
     bne check_output
-    bad_file:
-        ; Handle 0 (standard input; not yet implemented)
-        set_errno EBADF
+        ; Handle 0 (standard input)
+        ; Call GETIN to get a single character
+        ; TODO: Provide a means to access CHRIN for Kernal-style line input
+        @key_loop:
+            jsr GETIN
+            cmp #0
+        beq @key_loop
+        tax
+        lda pet_to_ascii,x
+        sta io_xfer+0
+
+        ; Transfer to target memory
+        lda #1
+        sta _RISCV_ireg_0+REG_a0
+        sta io_size+0
+        lda #0
+        sta _RISCV_ireg_1+REG_a0
+        sta io_size+1
+        sta _RISCV_ireg_2+REG_a0
+        sta io_size+2
+        sta _RISCV_ireg_3+REG_a0
+        sta io_size+3
+        jsr write_io_xfer
+
         rts
     check_output:
     sec
     sbc #3
     bcs check_file
+    bad_file:
         ; Handle 1 (standard output) or 2 (standard error)
         ; These are not valid
         set_errno EBADF
@@ -1066,6 +1088,9 @@ lseek_location: .res 4
         sta _RISCV_ireg_3+REG_a0
         rts
 
+check_0: .byte "check 0", 13, 10, 0
+check_1: .byte "check 1", 13, 10, 0
+check_2: .byte "check 2", 13, 10, 0
 .endproc
 
 ; Write to the given file handle
@@ -2531,9 +2556,10 @@ create_file:
 
     ; Requirement is the same as check_read, except that the address must also
     ; be above the fence
-    lda RISCV_fence
-    cmp io_addr+2
-    bcc check_read
+    lda io_addr+2
+    cmp RISCV_fence
+    bcs check_read
+    sec
     rts
 
 .endproc
@@ -5392,7 +5418,27 @@ ten:
 .segment "PAGEALIGN"
 .align 256
 
+; ASCII to PET conversion table, for screen output
 ascii_to_pet:
+    .byte $00,$01,$02,$03,$04,$05,$06,$07,$08,$09,$0D,$0B,$0C,$0A,$0E,$0F
+    .byte $10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$1A,$1B,$1C,$1D,$1E,$1F
+    .byte $20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$2A,$2B,$2C,$2D,$2E,$2F
+    .byte $30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$3A,$3B,$3C,$3D,$3E,$3F
+    .byte $40,$61,$62,$63,$64,$65,$66,$67,$68,$69,$6A,$6B,$6C,$6D,$6E,$6F
+    .byte $70,$71,$72,$73,$74,$75,$76,$77,$78,$79,$7A,$5B,$5C,$5D,$5E,$5F
+    .byte $60,$41,$42,$43,$44,$45,$46,$47,$48,$49,$4A,$4B,$4C,$4D,$4E,$4F
+    .byte $50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$5A,$7B,$7C,$7D,$7E,$7F
+    .byte $80,$81,$82,$83,$84,$85,$86,$87,$88,$89,$8A,$8B,$8C,$8D,$8E,$8F
+    .byte $90,$91,$92,$93,$94,$95,$96,$97,$98,$99,$9A,$9B,$9C,$9D,$9E,$9F
+    .byte $A0,$A1,$A2,$A3,$A4,$A5,$A6,$A7,$A8,$A9,$AA,$AB,$AC,$AD,$AE,$AF
+    .byte $B0,$B1,$B2,$B3,$B4,$B5,$B6,$B7,$B8,$B9,$BA,$BB,$BC,$BD,$BE,$BF
+    .byte $C0,$C1,$C2,$C3,$C4,$C5,$C6,$C7,$C8,$C9,$CA,$CB,$CC,$CD,$CE,$CF
+    .byte $D0,$D1,$D2,$D3,$D4,$D5,$D6,$D7,$D8,$D9,$DA,$DB,$DC,$DD,$DE,$DF
+    .byte $E0,$E1,$E2,$E3,$E4,$E5,$E6,$E7,$E8,$E9,$EA,$EB,$EC,$ED,$EE,$EF
+    .byte $F0,$F1,$F2,$F3,$F4,$F5,$F6,$F7,$F8,$F9,$FA,$FB,$FC,$FD,$FE,$FF
+
+; PET to ASCII conversion table, for keyboard input
+pet_to_ascii:
     .byte $00,$01,$02,$03,$04,$05,$06,$07,$08,$09,$0D,$0B,$0C,$0A,$0E,$0F
     .byte $10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$1A,$1B,$1C,$1D,$1E,$1F
     .byte $20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$2A,$2B,$2C,$2D,$2E,$2F
