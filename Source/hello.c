@@ -8,6 +8,18 @@
 int
 main(void)
 {
+    char str[256];
+
+    strcpy(str, "unwritten");
+    printf("Type something:\n");
+    char *p = fgets(str, sizeof(str), stdin);
+    printf("p=%p str=%p\n", p, str);
+    if (p == NULL) {
+        perror("fgets");
+    }
+    printf("input string is \"%s\"", str);
+
+#if 0
     static const char path[] = "/dir.1/dir.2/test.txt";
     int x;
     int fd = open(path, O_RDONLY, 0);
@@ -102,6 +114,7 @@ main(void)
         perror(path);
     }
     close(fd2);
+#endif
 
 #if 0
     if (fd >= 0) {
