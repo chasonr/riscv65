@@ -1088,9 +1088,6 @@ lseek_location: .res 4
         sta _RISCV_ireg_3+REG_a0
         rts
 
-check_0: .byte "check 0", 13, 10, 0
-check_1: .byte "check 1", 13, 10, 0
-check_2: .byte "check 2", 13, 10, 0
 .endproc
 
 ; Write to the given file handle
