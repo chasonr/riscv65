@@ -4,10 +4,17 @@
 #include <time.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <sys/time.h>
 
 int
 main(void)
 {
+    struct timeval tv1;
+    gettimeofday(&tv1, NULL);
+    printf("time=%s\n", asctime(gmtime(&tv1.tv_sec)));
+
+#if 0
     char str[256];
 
     strcpy(str, "unwritten");
@@ -18,13 +25,35 @@ main(void)
         perror("fgets");
     }
     printf("input string is \"%s\"", str);
+#endif
 
-#if 0
     static const char path[] = "/dir.1/dir.2/test.txt";
+#if 0
     int x;
+#endif
     int fd = open(path, O_RDONLY, 0);
     printf("len=%u open returns: %d\n", (unsigned)strlen(path), fd);
+    struct stat st;
+    memset(&st, 0, sizeof(st));
+    int rc = fstat(fd, &st);
+    printf("rc = %d\n", rc);
+    printf("st_dev = %ld\n", (long)st.st_dev);
+    printf("sizeof(st_ino) = %lu\n", (unsigned long)sizeof(st.st_ino));
+    printf("st_ino = %ld\n", (long)st.st_ino);
+    printf("st_mode = %lo\n", (long)st.st_mode);
+    printf("st_nlink = %ld\n", (long)st.st_nlink);
+    printf("st_uid = %ld\n", (long)st.st_uid);
+    printf("st_gid = %ld\n", (long)st.st_gid);
+    printf("st_rdev = %ld\n", (long)st.st_rdev);
+    printf("st_size = %ld\n", (long)st.st_size);
+    printf("st_blksize = %ld\n", (long)st.st_blksize);
+    printf("st_blocks = %ld\n", (long)st.st_blocks);
+    printf("st_atim = %ld\n", (long)st.st_atim.tv_sec);
+    printf("st_ctim = %ld\n", (long)st.st_ctim.tv_sec);
+    printf("st_mtim = %ld\n", (long)st.st_mtim.tv_sec);
+    close(fd);
 
+#if 0
     // Seek forward, from end
     long pos = lseek(fd, -60000, SEEK_END);
     x = errno;

@@ -1638,6 +1638,14 @@ lseek_location: .res 4
         sta io_xfer-1,x
     dex
     bne clear
+    lda #$FF
+    ldx #11
+    minus_one:
+        sta io_xfer+kernel_stat::st_atim,x
+        sta io_xfer+kernel_stat::st_ctim,x
+        sta io_xfer+kernel_stat::st_mtim,x
+    dex
+    bpl minus_one
 
     ; Check for special file handles 0, 1 and 2
     lda _RISCV_ireg_1+REG_a0
@@ -1647,9 +1655,9 @@ lseek_location: .res 4
     lda _RISCV_ireg_0+REG_a0
     bne check_output
         ; Handle 0 (standard input)
-        lda #<020444            ; Character device, writable
+        lda #<%010000100100100  ; Character device, writable
         sta io_xfer+kernel_stat::st_mode+0
-        lda #>020444
+        lda #>%010000100100100
         sta io_xfer+kernel_stat::st_mode+1
         lda #0
         sta io_xfer+kernel_stat::st_mode+2
@@ -1660,12 +1668,13 @@ lseek_location: .res 4
         sta _RISCV_ireg_3+REG_a0
         jmp write_io_xfer
     check_output:
-    cmp #3
+    sec
+    sbc #3
     bcs check_file
         ; Handle 1 (standard output) or 2 (standard error)
-        lda #<020222            ; Character device, readable
+        lda #<%010000010010010  ; Character device, readable
         sta io_xfer+kernel_stat::st_mode+0
-        lda #>020222
+        lda #>%010000010010010
         sta io_xfer+kernel_stat::st_mode+1
         lda #0
         sta io_xfer+kernel_stat::st_mode+2
@@ -1677,318 +1686,477 @@ lseek_location: .res 4
         jmp write_io_xfer
     check_file:
 
-    ; File I/O not yet implemented
-    set_errno EBADF
-    rts
+        ; Set pointer to file data
+        sta file_handle
+        tax
+        lda open_files_lo,x
+        sta local_addr+0
+        lda open_files_hi,x
+        sta local_addr+1
+
+        ; Check that the file is open
+        lda (local_addr),y
+        jeq bad_file
+
+        ; "Inode number" is the location of the directory entry
+        ldy #filedata::dir_entry
+        lda (local_addr),y
+        sta io_xfer+kernel_stat::st_ino+0
+        iny
+        lda (local_addr),y
+        sta io_xfer+kernel_stat::st_ino+1
+        iny
+        lda (local_addr),y
+        sta io_xfer+kernel_stat::st_ino+2
+        iny
+        lda (local_addr),y
+        sta io_xfer+kernel_stat::st_ino+3
+
+        ; Block size
+        lda fs_cluster_shift
+        tax
+        lsr a
+        lsr a
+        lsr a
+        tay
+        txa
+        and #$07
+        tax
+        lda bit_shift,x
+        sta io_xfer+kernel_stat::st_blksize+1,y
+
+        ; Creation time
+        ldy #filedata::ctime_lo
+        lda (local_addr),y
+        sta dos_time+0
+        ldy #filedata::ctime
+        lda (local_addr),y
+        sta dos_time+1
+        iny
+        lda (local_addr),y
+        sta dos_time+2
+        ldy #filedata::cdate
+        lda (local_addr),y
+        sta dos_time+3
+        iny
+        lda (local_addr),y
+        sta dos_time+4
+        jsr dos_to_unix_time
+        ldx #11
+        @copy_1:
+            lda unix_time,x
+            sta io_xfer+kernel_stat::st_ctim,x
+        dex
+        bpl @copy_1
+
+        ; Modification time
+        lda #0
+        sta dos_time+0
+        ldy #filedata::mtime
+        lda (local_addr),y
+        sta dos_time+1
+        iny
+        lda (local_addr),y
+        sta dos_time+2
+        ldy #filedata::mdate
+        lda (local_addr),y
+        sta dos_time+3
+        iny
+        lda (local_addr),y
+        sta dos_time+4
+        jsr dos_to_unix_time
+        ldx #11
+        @copy_2:
+            lda unix_time,x
+            sta io_xfer+kernel_stat::st_mtim,x
+        dex
+        bpl @copy_2
+
+        ; The call will succeed
+        lda #0
+        sta _RISCV_ireg_0+REG_a0
+        sta _RISCV_ireg_1+REG_a0
+        sta _RISCV_ireg_2+REG_a0
+        sta _RISCV_ireg_3+REG_a0
+
+        ; File or directory?
+        ldy #filedata::attributes
+        lda (local_addr),y
+        and #ATTR_DIRECTORY
+        beq @regular_file
+
+            ; directory
+            lda #<%100000111111111 ; Directory, read, write, execute
+            sta io_xfer+kernel_stat::st_mode+0
+            lda #>%100000111111111
+            sta io_xfer+kernel_stat::st_mode+1
+
+            ; Set three links for directory: one for the directory and one
+            ; each for . and ..
+            lda #3
+            sta io_xfer+kernel_stat::st_nlink+0
+
+            jmp write_io_xfer
+
+        @regular_file:
+
+            ; regular file
+            ldx #%11111111      ; read, write, execute
+            lda (local_addr),y
+            and #ATTR_READONLY
+            beq @writable
+                ldx #%01101101  ; read, execute
+            @writable:
+            stx io_xfer+kernel_stat::st_mode+0
+            lda #1              ; The world-readable bit
+            sta io_xfer+kernel_stat::st_mode+1
+
+            ; Only one link
+            lda #1
+            sta io_xfer+kernel_stat::st_nlink+0
+
+            ; File size
+            ldy #filedata::size
+            lda (local_addr),y
+            sta io_xfer+kernel_stat::st_size+0
+            iny
+            lda (local_addr),y
+            sta io_xfer+kernel_stat::st_size+1
+            iny
+            lda (local_addr),y
+            sta io_xfer+kernel_stat::st_size+2
+            iny
+            lda (local_addr),y
+            sta io_xfer+kernel_stat::st_size+3
+
+            jmp write_io_xfer
+
+    bad_file:
+        set_errno EBADF
+        rts
 
 .endproc
 
-; Get time of day
-; A0 == pointer to struct timeval that will receive the time
-.global SYS_gettimeofday
-.proc SYS_gettimeofday
+bit_shift: .byte $01, $02, $04, $08, $10, $20, $40, $80
 
-    ; Set up the transfer area
-    lda _RISCV_ireg_0+REG_a0
-    sta io_addr+0
-    lda _RISCV_ireg_1+REG_a0
-    sta io_addr+1
-    lda _RISCV_ireg_2+REG_a0
-    sta io_addr+2
-    lda _RISCV_ireg_3+REG_a0
-    sta io_addr+3
-    lda #timeval_size
-    sta io_size+0
+; Convert DOS to Unix time
+; Accept DOS time in dos_time
+; Return Unix time in unix_time
+.proc dos_to_unix_time
+
+    ; Year
+    lda dos_time+4
+    lsr a
+    clc
+    adc #<1980
+    sta dos_year+0
     lda #0
-    sta io_size+1
-    sta io_size+2
-    sta io_size+3
-    jsr check_write
-    bcc write_ok
-        set_errno EFAULT
-        rts
-    write_ok:
+    adc #>1980
+    sta dos_year+1
 
-    ; Get time from the U64
-    jsr get_time
+    ; Month
+    lda dos_time+4
+    lsr a
+    lda dos_time+3
+    ror a
+    lsr a
+    lsr a
+    lsr a
+    lsr a
+    sta dos_month
 
-    ; get_time always succeeds
-    ; Response is yyyy/mm/dd hh:mm:ss
-    ; Convert the components to integer form
-    ; Year is 1980-2079
+    ; Day
+    lda dos_time+3
+    and #$1F
+    sta dos_day
 
-    lda io_xfer+0 ; 1000s of year
-    and #$0F
-    tax
-    lda thousand_lo,x
-    sta io_xfer+32
+    ; Hour
+    lda dos_time+2
+    lsr a
+    lsr a
+    lsr a
+    sta dos_hour
 
-    lda io_xfer+1 ; 100s of year
-    and #$0F
-    tax
-    clc
-    lda io_xfer+32
-    adc hundred_lo,x
-    sta io_xfer+32
+    ; Minute
+    lda dos_time+2
+    and #$07
+    sta dos_minute
+    lda dos_time+1
+    asl a
+    rol dos_minute
+    asl a
+    rol dos_minute
+    asl a
+    rol dos_minute
 
-    lda io_xfer+2 ; 10s of year
-    and #$0F
-    tax
-    lda io_xfer+3 ; 1s of year
-    and #$0F
-    clc
-    adc ten,x
-    ; the add never carries
-    adc io_xfer+32
-    sta io_xfer+32
+    ; Second
+    lda dos_time+1
+    and #$1F
+    sta dos_second
+    lda dos_time+0
+    cmp #100
+    rol dos_second
 
-    ; io_xfer+32 == year % 256
+    jmp component_to_unix_time
 
-    ; Subtract 1970 from year to get years from epoch
+.endproc
+
+; Convert component time to Unix time
+.proc component_to_unix_time
+
+    ; Year since 1970
     sec
+    lda dos_year+0
     sbc #<1970
-    tay
-
-    ; Y == year - 1970
-
-    ; Look up days from epoch for the year
-    lda year_to_day_lo,y
-    sta io_xfer+33
-    lda year_to_day_hi,y
-    sta io_xfer+34
-
-    ; Convert month to integer
-
-    lda io_xfer+5   ; 10s of month
-    and #$0F
     tax
-    lda io_xfer+6   ; 1s of month
-    and #$0F
-    clc
-    adc ten,x
-    tax
+    lda dos_year+1
+    sbc #>1970
+    bcc @bad_time_1
+    bne @bad_time_1
+    cpx #2100-1970
+    bcs @bad_time_1
 
-    ; X = month
-    ; Look up days from start of year
-    clc
-    lda io_xfer+33
-    adc month_to_day_lo-1,x
-    sta io_xfer+33
-    lda io_xfer+34
-    adc month_to_day_hi-1,x
-    sta io_xfer+34
+    ; Convert to day
+    lda year_to_day_lo,x
+    sta unix_time+0
+    lda year_to_day_hi,x
+    sta unix_time+1
 
-    ; Account for February 29
-    cpx #$03
-    bcc end_leap        ; month is January or February
-    lda io_xfer+32
+    ; Month
+    ldx dos_month
+    dex
+    cpx #12
+    bcs @bad_time_1
+    ; Convert to day
+    clc
+    lda month_to_day_lo,x
+    adc unix_time+0
+    sta unix_time+0
+    lda month_to_day_hi,x
+    adc unix_time+1
+    sta unix_time+1
+
+    ; Check for month after February 29
+    cpx #3
+    bcc @end_leap_day ; January or February
+
+    ; Check for leap year
+    lda dos_year
     and #$03
-    bne end_leap        ; year divides by 4
-        inc io_xfer+33
-        bne end_leap
-        inc io_xfer+34
-    end_leap:
+    bne @end_leap_day ; Not leap year
 
-    ; Convert day to integer
+        ; Add one day
+        inc unix_time+0
+        beq @end_leap_day
+        inc unix_time+1
 
-    lda io_xfer+8   ; 10s of day
-    and #$0F
-    tax
-    lda io_xfer+9   ; 1s of day
-    and #$0F
-    clc
-    adc ten,x
+    @end_leap_day:
+
+    ; Day of month
+    lda dos_day
     sec
     sbc #1
+    cmp #31
+    bcc :+
+    @bad_time_1:
+        jmp @bad_time
+    :
     clc
-    adc io_xfer+33
-    sta io_xfer+33
+    adc unix_time+0
+    sta unix_time+0
     lda #0
-    adc io_xfer+34
-    sta io_xfer+34
+    adc unix_time+1
+    sta unix_time+1
+    ; unix_time[1:0] contains days from 1970
 
-    ; io_xfer+33,34 == days from epoch
-    ; Convert to hours
-    lda #0
-    .repeat 3
-        asl io_xfer+33
-        rol io_xfer+34
-        rol a
-    .endrep
-    sta io_xfer+35      ; io_xfer+33,34,35 == days*8
-    lda io_xfer+33
+    ; Convert to hour
+    lda unix_time+0
     asl a
-    sta io_xfer+36
-    lda io_xfer+34
+    sta unix_time+2
+    lda unix_time+1
     rol a
-    sta io_xfer+37
-    lda io_xfer+35
+    sta unix_time+3
+    lda #0
     rol a
-    sta io_xfer+38      ; io_xfer+36,37,38 == days*16
+    sta unix_time+4 ; unix_time[1:0] = days; unix_time[4:2] = days*2
     clc
-    lda io_xfer+33
-    adc io_xfer+36
-    sta io_xfer+33
-    lda io_xfer+34
-    adc io_xfer+37
-    sta io_xfer+34
-    lda io_xfer+35
-    adc io_xfer+38
-    sta io_xfer+35      ; io_xfer+33,34,35 = days*24
-
-    ; Convert hour to integer
-
-    lda io_xfer+11  ; 10s of hour
-    and #$0F
-    tax
-    lda io_xfer+12  ; 1s of hour
-    and #$0F
-    clc
-    adc ten,x
-    clc
-    adc io_xfer+33
-    sta io_xfer+33
+    lda unix_time+0
+    adc unix_time+2
+    sta unix_time+2
+    lda unix_time+1
+    adc unix_time+3
+    sta unix_time+3
     lda #0
-    adc io_xfer+34
-    sta io_xfer+34
-    lda #0
-    adc io_xfer+35
-    sta io_xfer+35
+    adc unix_time+4 ; A:unix_time[3:2] = days*3
+    asl unix_time+2
+    rol unix_time+3
+    rol a           ; days*6
+    asl unix_time+2
+    rol unix_time+3
+    rol a           ; days*12
+    asl unix_time+2
+    rol unix_time+3
+    rol a           ; days*24
+    sta unix_time+4
 
-    ; io_xfer+33,34,35 == hours from epoch
+    ; Add hours from component time
+    lda dos_hour
+    cmp #24
+    jcs @bad_time_1
+    clc
+    adc unix_time+2
+    sta unix_time+0
+    lda #0
+    adc unix_time+3
+    sta unix_time+1
+    lda #0
+    adc unix_time+4
+    sta unix_time+2 ; unix_time[2:0] = hours since 1970
+
     ; Convert to minutes
-
-    lda io_xfer+33
-    sta io_xfer+37
-    lda io_xfer+34
-    sta io_xfer+38
-    lda io_xfer+35
-    sta io_xfer+39      ; io_xfer+37,38,39 == hours
+    lda unix_time+0
+    asl a
+    sta unix_time+4
+    lda unix_time+1
+    rol a
+    sta unix_time+5
+    lda unix_time+2
+    rol a
+    sta unix_time+6
     lda #0
-    .repeat 4
-        asl io_xfer+33
-        rol io_xfer+34
-        rol io_xfer+35
-        rol a
-    .endrep
-    sta io_xfer+36      ; io_xfer+33,34,35,36 == hours*16
+    rol a           ; A:unix_time[6:4] = hours*2
+    asl unix_time+4
+    rol unix_time+5
+    rol unix_time+6
+    rol a           ; hours*4
+    asl unix_time+4
+    rol unix_time+5
+    rol unix_time+6
+    rol a           ; hours*8
+    asl unix_time+4
+    rol unix_time+5
+    rol unix_time+6
+    rol a
+    sta unix_time+7 ; unix_time[7:4] = hours*16
     sec
-    lda io_xfer+33
-    sbc io_xfer+37
-    sta io_xfer+33
-    lda io_xfer+34
-    sbc io_xfer+38
-    sta io_xfer+34
-    lda io_xfer+35
-    sbc io_xfer+39
-    sta io_xfer+35
-    lda io_xfer+36
-    sbc #0              ; io_xfer+33,34,35,A == hours*15
-    .repeat 2
-        asl io_xfer+33
-        rol io_xfer+34
-        rol io_xfer+35
-        rol a
-    .endrep
-    sta io_xfer+36      ; io_xfer+33,34,35,36 == hours*60
+    lda unix_time+4
+    sbc unix_time+0
+    sta unix_time+0
+    lda unix_time+5
+    sbc unix_time+1
+    sta unix_time+1
+    lda unix_time+6
+    sbc unix_time+2
+    sta unix_time+2
+    lda unix_time+7
+    sbc #0          ; A:unix_time[2:0] = hours*15
+    asl unix_time+0
+    rol unix_time+1
+    rol unix_time+2
+    rol a           ; hours*30
+    asl unix_time+0
+    rol unix_time+1
+    rol unix_time+2
+    rol a
+    sta unix_time+3 ; unix_time[3:0] = hours*60
 
-    ; Convert minute to integer
-
-    lda io_xfer+14  ; 10s of minute
-    and #$0F
-    tax
-    lda io_xfer+15  ; 1s of minute
-    and #$0F
+    ; Add minutes from component time
+    lda dos_minute
+    cmp #60
+    jcs @bad_time
     clc
-    adc ten,x
-    clc
-    adc io_xfer+33
-    sta io_xfer+33
+    adc unix_time+0
+    sta unix_time+0
     lda #0
-    adc io_xfer+34
-    sta io_xfer+34
+    adc unix_time+1
+    sta unix_time+1
     lda #0
-    adc io_xfer+35
-    sta io_xfer+35
+    adc unix_time+2
+    sta unix_time+2
     lda #0
-    adc io_xfer+36
-    sta io_xfer+36
+    adc unix_time+3
+    sta unix_time+3
 
-    ; io_xfer+33,34,35,36 == minutes from epoch
     ; Convert to seconds
-
-    lda io_xfer+33
-    sta io_xfer+37
-    lda io_xfer+34
-    sta io_xfer+38
-    lda io_xfer+35
-    sta io_xfer+39
-    lda io_xfer+36
-    sta io_xfer+40      ; io_xfer+37,38,39,40 == minutes
-    .repeat 4
-        asl io_xfer+33
-        rol io_xfer+34
-        rol io_xfer+35
-        rol a
-    .endrep
-    sta io_xfer+36      ; io_xfer+33,34,35,36 == minutes*16
+    lda unix_time+0
+    asl a
+    sta unix_time+4
+    lda unix_time+1
+    rol a
+    sta unix_time+5
+    lda unix_time+2
+    rol a
+    sta unix_time+6
+    lda unix_time+3
+    rol a           ; A:unix_time[6:4] = minutes*2
+    asl unix_time+4
+    rol unix_time+5
+    rol unix_time+6
+    rol a           ; minutes*4
+    asl unix_time+4
+    rol unix_time+5
+    rol unix_time+6
+    rol a           ; minutes*8
+    asl unix_time+4
+    rol unix_time+5
+    rol unix_time+6
+    rol a
+    sta unix_time+7 ; unix_time[7:4] = minutes*16
     sec
-    lda io_xfer+33
-    sbc io_xfer+37
-    sta io_xfer+33
-    lda io_xfer+34
-    sbc io_xfer+38
-    sta io_xfer+34
-    lda io_xfer+35
-    sbc io_xfer+39
-    sta io_xfer+35
-    lda io_xfer+36
-    sbc io_xfer+40      ; io_xfer+33,34,35,A == minutes*15
-    .repeat 2
-        asl io_xfer+33
-        rol io_xfer+34
-        rol io_xfer+35
-        rol a
-    .endrep
-    sta io_xfer+36      ; io_xfer+33,34,35,36 == minutes*60
+    lda unix_time+4
+    sbc unix_time+0
+    sta unix_time+0
+    lda unix_time+5
+    sbc unix_time+1
+    sta unix_time+1
+    lda unix_time+6
+    sbc unix_time+2
+    sta unix_time+2
+    lda unix_time+7
+    sbc unix_time+3 ; A:unix_time[2:0] = minutes*15
+    asl unix_time+0
+    rol unix_time+1
+    rol unix_time+2
+    rol a           ; minutes*30
+    asl unix_time+0
+    rol unix_time+1
+    rol unix_time+2
+    rol a
+    sta unix_time+3 ; unix_time[3:0] = minutes*60
 
-    ; Convert second to integer and write to io_xfer+0
-
-    lda io_xfer+17  ; 10s of second
-    and #$0F
-    tax
-    lda io_xfer+18  ; 1s of second
-    and #$0F
+    ; Add seconds from component time
+    lda dos_second
+    cmp #60
+    bcs @bad_time
     clc
-    adc ten,x
-    clc
-    adc io_xfer+33
-    sta io_xfer+0
+    adc unix_time+0
+    sta unix_time+0
     lda #0
-    adc io_xfer+34
-    sta io_xfer+1
+    adc unix_time+1
+    sta unix_time+1
     lda #0
-    adc io_xfer+35
-    sta io_xfer+2
+    adc unix_time+2
+    sta unix_time+2
     lda #0
-    adc io_xfer+36
-    sta io_xfer+3
+    adc unix_time+3
+    sta unix_time+3
 
-    ; Fill out to a struct timeval
-    ldx #11
+    ; Zero out the rest of unix_time
     lda #0
-    zero:
-        sta io_xfer+4,x
+    ldx #7
+    @zero:
+        sta unix_time+4,x
     dex
-    bpl zero
+    bpl @zero
+    rts
 
-    jsr write_io_xfer
-
-    lda #0
-    sta _RISCV_ireg_0+REG_a0
-    sta _RISCV_ireg_1+REG_a0
-    sta _RISCV_ireg_2+REG_a0
-    sta _RISCV_ireg_3+REG_a0
+@bad_time:
+    lda #$FF
+    ldx #11
+    @error:
+        sta unix_time,x
+    dex
+    bpl @error
     rts
 
 year_to_day_lo:
@@ -2283,6 +2451,166 @@ month_to_day_hi:
     .byte >273      ; October
     .byte >304      ; November
     .byte >334      ; December
+
+.endproc
+
+.bss
+dos_time: .res 5
+unix_time: .res 12
+dos_year: .res 2
+dos_month: .res 1
+dos_day: .res 1
+dos_hour: .res 1
+dos_minute: .res 1
+dos_second: .res 1
+
+.code
+
+; Get time of day
+; A0 == pointer to struct timeval that will receive the time
+.global SYS_gettimeofday
+.proc SYS_gettimeofday
+
+    ; Set up the transfer area
+    lda _RISCV_ireg_0+REG_a0
+    sta io_addr+0
+    lda _RISCV_ireg_1+REG_a0
+    sta io_addr+1
+    lda _RISCV_ireg_2+REG_a0
+    sta io_addr+2
+    lda _RISCV_ireg_3+REG_a0
+    sta io_addr+3
+    lda #timeval_size
+    sta io_size+0
+    lda #0
+    sta io_size+1
+    sta io_size+2
+    sta io_size+3
+    jsr check_write
+    bcc write_ok
+        set_errno EFAULT
+        rts
+    write_ok:
+
+    ; Get time from the U64
+    jsr get_time
+
+    ; get_time always succeeds
+    ; Response is yyyy/mm/dd hh:mm:ss
+    ; Convert the components to integer form
+    ; Year is 1980-2079
+
+    lda io_xfer+0 ; 1000s of year
+    and #$0F
+    tax
+    lda thousand_lo,x
+    sta dos_year+0
+    lda thousand_hi,x
+    sta dos_year+1
+
+    lda io_xfer+1 ; 100s of year
+    and #$0F
+    tax
+    clc
+    lda dos_year+0
+    adc hundred_lo,x
+    sta dos_year+0
+    lda dos_year+1
+    adc hundred_hi,x
+    sta dos_year+1
+
+    lda io_xfer+2 ; 10s of year
+    and #$0F
+    tax
+    lda io_xfer+3 ; 1s of year
+    and #$0F
+    clc
+    adc ten,x
+    ; the add never carries
+    adc dos_year+0
+    sta dos_year+0
+    lda #0
+    adc dos_year+1
+    sta dos_year+1
+
+    ; Convert month to integer
+
+    lda io_xfer+5   ; 10s of month
+    and #$0F
+    tax
+    lda io_xfer+6   ; 1s of month
+    and #$0F
+    clc
+    adc ten,x
+    sta dos_month
+
+    ; Convert day to integer
+
+    lda io_xfer+8   ; 10s of day
+    and #$0F
+    tax
+    lda io_xfer+9   ; 1s of day
+    and #$0F
+    clc
+    adc ten,x
+    sta dos_day
+
+    ; Convert hour to integer
+
+    lda io_xfer+11  ; 10s of hour
+    and #$0F
+    tax
+    lda io_xfer+12  ; 1s of hour
+    and #$0F
+    clc
+    adc ten,x
+    sta dos_hour
+
+    ; Convert minute to integer
+
+    lda io_xfer+14  ; 10s of minute
+    and #$0F
+    tax
+    lda io_xfer+15  ; 1s of minute
+    and #$0F
+    clc
+    adc ten,x
+    sta dos_minute
+
+    ; Convert second to integer
+
+    lda io_xfer+17  ; 10s of second
+    and #$0F
+    tax
+    lda io_xfer+18  ; 1s of second
+    and #$0F
+    clc
+    adc ten,x
+    sta dos_second
+
+    ; Convert to Unix time
+    jsr component_to_unix_time
+
+    ; Transfer to the caller
+    ldx #11
+    @copy:
+        lda unix_time,x
+        sta io_xfer,x
+    dex
+    bpl @copy
+    sta io_xfer+12
+    sta io_xfer+13
+    sta io_xfer+14
+    sta io_xfer+15
+
+    jsr write_io_xfer
+
+    lda #0
+    sta _RISCV_ireg_0+REG_a0
+    sta _RISCV_ireg_1+REG_a0
+    sta _RISCV_ireg_2+REG_a0
+    sta _RISCV_ireg_3+REG_a0
+    rts
 
 .endproc
 
