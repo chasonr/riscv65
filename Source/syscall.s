@@ -2727,10 +2727,6 @@ error:
     handle_ok:
     stx file_handle
 
-    ; Set up the transfer area
-    ; We don't know the length in advance. Check that we can read at least
-    ; one byte. read_path will check that the path does not exceed readable
-    ; space.
     lda _RISCV_ireg_0+REG_a0
     sta io_addr+0
     lda _RISCV_ireg_1+REG_a0
@@ -2739,131 +2735,32 @@ error:
     sta io_addr+2
     lda _RISCV_ireg_3+REG_a0
     sta io_addr+3
-    lda #1
-    sta io_size+0
-    lda #0
-    sta io_size+1
-    sta io_size+2
-    sta io_size+3
-    jsr check_read
-    bcc read_ok
-        set_errno EFAULT
-        rts
-    read_ok:
 
-    ; Read path into fs_path
-    jsr read_path
-    bcc path_ok
-        sta _RISCV_ireg_0+REG_a0
-        lda #$FF
-        sta _RISCV_ireg_1+REG_a0
-        sta _RISCV_ireg_2+REG_a0
-        sta _RISCV_ireg_3+REG_a0
-        rts
-    path_ok:
+    ; Find the file with the given path
+    jsr find_file
+    bcc @found_file
 
-    ; Begin traversal of path:
-    ; Start at start of path string
-    lda #<fs_path
-    sta path_ptr+0
-    lda #>fs_path
-    sta path_ptr+1
-
-    ; Start at current directory, or root if absolute path
-    lda #0
-    ldy #filedata_size-1
-    zero_loop:
-        sta file_data,y
-    dey
-    bpl zero_loop
-
-    ; Set open mode flags
-    lda _RISCV_ireg_0+REG_a1
-    sta file_data+filedata::open_flags+0
-    lda _RISCV_ireg_1+REG_a1
-    sta file_data+filedata::open_flags+1
-    lda _RISCV_ireg_2+REG_a1
-    sta file_data+filedata::open_flags+2
-
-    lda #ATTR_DIRECTORY
-    sta file_data+filedata::attributes
-    lda fs_current_dir+0
-    sta file_data+filedata::cluster_lo+0
-    lda fs_current_dir+1
-    sta file_data+filedata::cluster_lo+1
-    lda fs_current_dir+2
-    sta file_data+filedata::cluster_hi+0
-    lda fs_current_dir+3
-    sta file_data+filedata::cluster_hi+1
-    lda fs_path+0
-    bne path_not_empty
-    ; Empty path is not valid
-        set_errno ENOENT
-        rts
-    path_not_empty:
-    cmp #$2F
-    beq root_dir
-    cmp #$5C
-    bne current_dir
-    root_dir:
-        ; Start search from root directory
-        lda fs_type
-        cmp #32
-        beq fat32
-            ; For FAT12 and FAT16, root directory has its own special area
-            lda #0
-            sta file_data+filedata::cluster_lo+0
-            sta file_data+filedata::cluster_lo+1
-            sta file_data+filedata::cluster_hi+0
-            sta file_data+filedata::cluster_hi+1
-            beq current_dir
-        fat32:
-            ; For FAT32, root directory starts at a cluster
-            lda fs_root_dir+0
-            sta file_data+filedata::cluster_lo+0
-            lda fs_root_dir+1
-            sta file_data+filedata::cluster_lo+1
-            lda fs_root_dir+2
-            sta file_data+filedata::cluster_hi+0
-            lda fs_root_dir+3
-            sta file_data+filedata::cluster_hi+1
-    current_dir:
-
-    path_loop:
-        lda file_data+filedata::cluster_lo+0
-        sta file_data+filedata::dir_start+0
-        lda file_data+filedata::cluster_lo+1
-        sta file_data+filedata::dir_start+1
-        lda file_data+filedata::cluster_hi+0
-        sta file_data+filedata::dir_start+2
-        lda file_data+filedata::cluster_hi+1
-        sta file_data+filedata::dir_start+3
-        jsr get_path_part
-        bcs end_path_loop
-        jsr find_entry
-    bcc path_loop
-        ; If we exit the loop this way, we didn't find the file.
         ; If this was by ENOENT, O_CREAT is specified, and the search failed
         ; on the last component of the file, go to the file creation path.
         cmp #$100-ENOENT
-        bne path_err        ; some other error
+        bne @path_err        ; some other error
         lda _RISCV_ireg_1+REG_a1
         and #O_CREAT>>8
-        beq path_err        ; no O_CREAT flag
+        beq @no_file         ; no O_CREAT flag
         jsr is_last_component
-        lda #$100-ENOENT
-        bcs path_err
+        bcs @no_file
         jmp create_file
-    path_err:
+    @no_file:
+        lda #$100-ENOENT
+    @path_err:
         sta _RISCV_ireg_0+REG_a0
         lda #$FF
         sta _RISCV_ireg_1+REG_a0
         sta _RISCV_ireg_2+REG_a0
         sta _RISCV_ireg_3+REG_a0
         rts
-    end_path_loop:
-    cmp #0
-    bne path_err
+
+    @found_file:
 
     ;jsr dump_dir_entry
 
@@ -2875,6 +2772,14 @@ error:
         set_errno EEXIST
         rts
     :
+
+    ; Set open mode flags
+    lda _RISCV_ireg_0+REG_a1
+    sta file_data+filedata::open_flags+0
+    lda _RISCV_ireg_1+REG_a1
+    sta file_data+filedata::open_flags+1
+    lda _RISCV_ireg_2+REG_a1
+    sta file_data+filedata::open_flags+2
 
     ; Check the attribute bits for conflicts with the open flags
     lda file_data+filedata::attributes
@@ -3073,6 +2978,14 @@ create_file:
     ; was found.
     ; path_part has the 8.3 name of the new file, formatted correctly for the
     ; new directory entry.
+
+    ; Set open mode flags
+    lda _RISCV_ireg_0+REG_a1
+    sta file_data+filedata::open_flags+0
+    lda _RISCV_ireg_1+REG_a1
+    sta file_data+filedata::open_flags+1
+    lda _RISCV_ireg_2+REG_a1
+    sta file_data+filedata::open_flags+2
 
     ; Address of temporary file data block, for allocate_cluster, set_mtime and
     ; write_dir_entry
@@ -3283,6 +3196,136 @@ create_file:
     :
 
     jmp return_from_open
+
+.endproc
+
+; Find the file whose path is at the address in io_size
+; Return C set if error, and -errno in A
+; If the search failed on the last part of the file, is_last_component
+; will return C clear
+
+.proc find_file
+
+    ; Set up the transfer area
+    ; We don't know the length in advance. Check that we can read at least
+    ; one byte. read_path will check that the path does not exceed readable
+    ; space.
+    lda #1
+    sta io_size+0
+    lda #0
+    sta io_size+1
+    sta io_size+2
+    sta io_size+3
+    jsr check_read
+    bcc @read_ok
+        lda #$100-EFAULT
+        sec
+        rts
+    @read_ok:
+
+    ; Read path into fs_path
+    jsr read_path
+    bcc @path_ok
+        ; C set, -errno in A
+        rts
+    @path_ok:
+
+    ; Begin traversal of path:
+    ; Start at start of path string
+    lda #<fs_path
+    sta path_ptr+0
+    lda #>fs_path
+    sta path_ptr+1
+
+    ; Clear any previous data from file_data
+    lda #0
+    ldy #filedata_size-1
+    @zero_loop:
+        sta file_data,y
+    dey
+    bpl @zero_loop
+
+    ; The initial directory must have ATTR_DIRECTORY so find_entry doesn't
+    ; return ENOTDIR
+    lda #ATTR_DIRECTORY
+    sta file_data+filedata::attributes
+
+    ; Start at current directory unless absolute path
+    lda fs_current_dir+0
+    sta file_data+filedata::cluster_lo+0
+    lda fs_current_dir+1
+    sta file_data+filedata::cluster_lo+1
+    lda fs_current_dir+2
+    sta file_data+filedata::cluster_hi+0
+    lda fs_current_dir+3
+    sta file_data+filedata::cluster_hi+1
+
+    ; Check for absolute or relative path
+    lda fs_path+0
+    bne @path_not_empty
+    ; Empty path is not valid
+        lda #$100-ENOENT
+        sec
+        rts
+    @path_not_empty:
+    cmp #$2F
+    beq @root_dir
+    cmp #$5C
+    bne @current_dir
+    @root_dir:
+        ; Start search from root directory
+        lda fs_type
+        cmp #32
+        beq @fat32
+            ; For FAT12 and FAT16, root directory has its own special area
+            lda #0
+            sta file_data+filedata::cluster_lo+0
+            sta file_data+filedata::cluster_lo+1
+            sta file_data+filedata::cluster_hi+0
+            sta file_data+filedata::cluster_hi+1
+            beq @current_dir
+        @fat32:
+            ; For FAT32, root directory starts at a cluster
+            lda fs_root_dir+0
+            sta file_data+filedata::cluster_lo+0
+            lda fs_root_dir+1
+            sta file_data+filedata::cluster_lo+1
+            lda fs_root_dir+2
+            sta file_data+filedata::cluster_hi+0
+            lda fs_root_dir+3
+            sta file_data+filedata::cluster_hi+1
+    @current_dir:
+
+    @path_loop:
+        lda file_data+filedata::cluster_lo+0
+        sta file_data+filedata::dir_start+0
+        lda file_data+filedata::cluster_lo+1
+        sta file_data+filedata::dir_start+1
+        lda file_data+filedata::cluster_hi+0
+        sta file_data+filedata::dir_start+2
+        lda file_data+filedata::cluster_hi+1
+        sta file_data+filedata::dir_start+3
+        jsr get_path_part
+        bcs @end_path_loop
+        jsr find_entry
+    bcc @path_loop
+        ; If we exit the loop this way, we didn't find the file.
+        ; This may be by ENOENT or an I/O error.
+        ; C is set and -errno is in A.
+        rts
+    @path_err:
+        sta _RISCV_ireg_0+REG_a0
+        lda #$FF
+        sta _RISCV_ireg_1+REG_a0
+        sta _RISCV_ireg_2+REG_a0
+        sta _RISCV_ireg_3+REG_a0
+        rts
+    @end_path_loop:
+    cmp #0
+    bne @path_err ; get_path_part returned an error
+
+    clc
+    rts
 
 .endproc
 
