@@ -44,6 +44,7 @@ make install-gcc install-target-libgcc
 cd ..
 
 tar xvf newlib-${NEWLIB_VERSION}.tar.gz
+patch -p0 -i newlib.patch
 mkdir build-newlib
 cd build-newlib
 ../newlib-${NEWLIB_VERSION}/configure --prefix=$HOME/riscv-gcc --target=riscv-elf
