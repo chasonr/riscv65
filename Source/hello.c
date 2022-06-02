@@ -5,14 +5,13 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
-#include <sys/time.h>
 
 int
 main(void)
 {
-    struct timeval tv1;
-    gettimeofday(&tv1, NULL);
-    printf("time=%s\n", asctime(gmtime(&tv1.tv_sec)));
+    time_t tv1;
+    time(&tv1);
+    printf("time=%s\n", asctime(gmtime(&tv1)));
 
 #if 0
     char str[256];
