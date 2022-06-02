@@ -84,6 +84,9 @@ last_cluster: .res 3
 ; Size to be read or written
 rw_size: .res 3
 
+; Maximum components in a directory path
+MAX_COMPONENTS = 16
+
 ; Structures for file access
 ; Operations in progress use file_data; open files are contained in open_files
 .struct filedata
@@ -101,8 +104,11 @@ rw_size: .res 3
     cluster_lo .word  1
     size       .dword 1
 
+    ; Path to this file, as location of directory entries
+    num_components .byte 1 ; number of components times four (number of bytes in components)
+    components .dword ::MAX_COMPONENTS
+
     ; Location of the directory entry
-    dir_start  .dword 1  ; cluster where enclosing directory starts; 0 for root
     dir_entry  .dword 1  ; position of this directory entry
     lfn_entry  .dword 1  ; position of first LFN entry; equal to dir_entry if no LFN
 
@@ -172,7 +178,8 @@ fs_root_dir:      .res 4 ; 256-byte offset to root directory (FAT12, FAT16)
 fs_cluster_base:  .res 3 ; Add this to shifted cluster number to get offset to cluster
 fs_ext_flags:     .res 1 ; FAT32 extended flags
 fs_info_sector:   .res 2 ; FAT32 info sector
-fs_current_dir:   .res 4 ; Starting cluster of current directory; 0 for root on FAT12 or FAT16
+fs_current_dir_num_components: .res 1 ; number of components times four (number of bytes in fs_current_dir)
+fs_current_dir:   .res 4*MAX_COMPONENTS ; Starting cluster of current directory; 0 for root on FAT12 or FAT16
 
 .segment "ZEROPAGE"
 io_count: .res 1
@@ -2972,8 +2979,8 @@ return_from_open:
 
 create_file:
     ; Come here to create the file.
-    ; filedata::dir_start has the starting cluster of the enclosing directory,
-    ; or 0 if that directory is the root on FAT12 or FAT16.
+    ; dir_start has the starting cluster of the enclosing directory, or 0 if
+    ; that directory is the root on FAT12 or FAT16.
     ; new_dir_entry has the location of an empty directory entry, or 0 if none
     ; was found.
     ; path_part has the 8.3 name of the new file, formatted correctly for the
@@ -3003,9 +3010,9 @@ create_file:
 
         ; No free entry was found.
         ; If the directory is the FAT12/FAT16 root, we can't extend it.
-        lda file_data+filedata::dir_start+0
-        ora file_data+filedata::dir_start+1
-        ora file_data+filedata::dir_start+2
+        lda dir_start+0
+        ora dir_start+1
+        ora dir_start+2
         bne extend_dir
             set_errno ENOSPC
             rts
@@ -3245,20 +3252,16 @@ create_file:
     dey
     bpl @zero_loop
 
-    ; The initial directory must have ATTR_DIRECTORY so find_entry doesn't
-    ; return ENOTDIR
-    lda #ATTR_DIRECTORY
-    sta file_data+filedata::attributes
-
     ; Start at current directory unless absolute path
-    lda fs_current_dir+0
-    sta file_data+filedata::cluster_lo+0
-    lda fs_current_dir+1
-    sta file_data+filedata::cluster_lo+1
-    lda fs_current_dir+2
-    sta file_data+filedata::cluster_hi+0
-    lda fs_current_dir+3
-    sta file_data+filedata::cluster_hi+1
+    ldx fs_current_dir_num_components
+    stx file_data+filedata::num_components
+    beq @end_copy_current_dir
+    @copy_current_dir:
+        lda fs_current_dir-1,x
+        sta file_data+filedata::components-1,x
+    dex
+    bne @copy_current_dir
+    @end_copy_current_dir:
 
     ; Check for absolute or relative path
     lda fs_path+0
@@ -3274,37 +3277,41 @@ create_file:
     bne @current_dir
     @root_dir:
         ; Start search from root directory
-        lda fs_type
-        cmp #32
-        beq @fat32
-            ; For FAT12 and FAT16, root directory has its own special area
-            lda #0
-            sta file_data+filedata::cluster_lo+0
-            sta file_data+filedata::cluster_lo+1
-            sta file_data+filedata::cluster_hi+0
-            sta file_data+filedata::cluster_hi+1
-            beq @current_dir
-        @fat32:
-            ; For FAT32, root directory starts at a cluster
-            lda fs_root_dir+0
-            sta file_data+filedata::cluster_lo+0
-            lda fs_root_dir+1
-            sta file_data+filedata::cluster_lo+1
-            lda fs_root_dir+2
-            sta file_data+filedata::cluster_hi+0
-            lda fs_root_dir+3
-            sta file_data+filedata::cluster_hi+1
+        lda #0
+        sta file_data+filedata::num_components
+        jsr set_root_directory
+        jmp @got_dir
     @current_dir:
+        ; Check for current directory being the root
+        ldx file_data+filedata::num_components
+        beq @root_dir
+        ; Set location of current directory
+        lda file_data+filedata::components-4,x
+        sta seek_location+0
+        lda file_data+filedata::components-3,x
+        sta seek_location+1
+        lda file_data+filedata::components-2,x
+        sta seek_location+2
+        lda file_data+filedata::components-1,x
+        sta seek_location+3
+        ; Get the directory entry
+        jsr do_seek
+        bcs @io_error
+        jsr read_dir_entry
+        bcc @got_dir
+        @io_error:
+            rts
+    @got_dir:
 
     @path_loop:
         lda file_data+filedata::cluster_lo+0
-        sta file_data+filedata::dir_start+0
+        sta dir_start+0
         lda file_data+filedata::cluster_lo+1
-        sta file_data+filedata::dir_start+1
+        sta dir_start+1
         lda file_data+filedata::cluster_hi+0
-        sta file_data+filedata::dir_start+2
+        sta dir_start+2
         lda file_data+filedata::cluster_hi+1
-        sta file_data+filedata::dir_start+3
+        sta dir_start+3
         jsr get_path_part
         bcs @end_path_loop
         jsr find_entry
@@ -3328,6 +3335,12 @@ create_file:
     rts
 
 .endproc
+
+.bss
+
+dir_start: .res 4
+
+.code
 
 ; Create a hard link
 ; Newlib can call this, but the file system doesn't support it
@@ -3841,10 +3854,7 @@ end_read:
     sta fs_ext_flags
     sta fs_info_sector+0
     sta fs_info_sector+1
-    sta fs_current_dir+0
-    sta fs_current_dir+1
-    sta fs_current_dir+2
-    sta fs_current_dir+3
+    sta fs_current_dir_num_components
     lda fs_clusters+3
     ora fs_clusters+2
     bne @fat32          ; must be FAT32 if > 65535
@@ -3880,16 +3890,12 @@ end_read:
             sta fs_info_sector+1
             lda io_xfer+boot_record::BPB_RootClus+0
             sta fs_root_dir+0
-            sta fs_current_dir+0
             lda io_xfer+boot_record::BPB_RootClus+1
             sta fs_root_dir+1
-            sta fs_current_dir+1
             lda io_xfer+boot_record::BPB_RootClus+2
             sta fs_root_dir+2
-            sta fs_current_dir+2
             lda io_xfer+boot_record::BPB_RootClus+3
             sta fs_root_dir+3
-            sta fs_current_dir+3
             rts
         @bad_fs_2:
             lda #0
@@ -4458,8 +4464,8 @@ bad_name:
 
 .endproc
 
-; With file_data+filedata::dir_start and file_data+filedata::attributes set up,
-; search directory for name matching path_part.
+; With dir_start and file_data+filedata::attributes set up, search directory for
+; name matching path_part.
 ; If found, return C clear, entry in file_data, and dir_entry and lfn_entry set.
 ; If not found, return C set and -ENOENT in A.
 ; If I/O error, return C set and another errno in A.
@@ -4473,6 +4479,56 @@ bad_name:
         sec
         rts
     dir_ok:
+
+    ; Check for . and ..
+    lda path_part+0
+    cmp #'.'
+    bne normal_dir_entry
+    lda path_part+1
+    beq dot
+    cmp #'.'
+    bne normal_dir_entry
+    lda path_part+2
+    bne normal_dir_entry
+
+        ; .. entry
+        ldx file_data+filedata::num_components
+        ; Go to root directory if already there or if only one component
+        beq is_root
+        dex
+        dex
+        dex
+        dex
+        stx file_data+filedata::num_components
+        bne go_up
+        is_root:
+            jsr set_root_directory
+            clc
+            rts
+        go_up:
+            ; Read the new directory entry
+            lda file_data+filedata::components+0,x
+            sta seek_location+0
+            lda file_data+filedata::components+1,x
+            sta seek_location+1
+            lda file_data+filedata::components+2,x
+            sta seek_location+2
+            lda file_data+filedata::components+3,x
+            sta seek_location+3
+            jsr do_seek
+            bcs @io_error
+            jsr read_dir_entry
+            bcc @ok
+            @io_error:
+                rts
+
+        @ok:
+    dot:
+        ; . entry; always succeed, and leave file_data unchanged
+        clc
+        rts
+
+    normal_dir_entry:
 
     ; This will record the location of an empty directory entry if we find one
     lda #0
@@ -4490,10 +4546,10 @@ bad_name:
     lda #0
     sta file_data+filedata::dir_entry+0
     sta file_data+filedata::lfn_entry+0
-    lda file_data+filedata::dir_start+0
-    ora file_data+filedata::dir_start+1
-    ora file_data+filedata::dir_start+2
-    ora file_data+filedata::dir_start+3
+    lda dir_start+0
+    ora dir_start+1
+    ora dir_start+2
+    ora dir_start+3
     bne dir_is_cluster_chain
 
         ; Enclosing directory is the root directory on a FAT12 or FAT16 volume.
@@ -4553,7 +4609,7 @@ bad_name:
         rts
 
     @dir_match:
-        clc
+        jsr push_dir_entry
         rts
 
     dir_is_cluster_chain:
@@ -4561,11 +4617,11 @@ bad_name:
         ; Enclosing directory is a cluster chain (root directory on FAT32, or
         ; any other directory on any volume).
         ; Set the starting cluster
-        lda file_data+filedata::dir_start+0
+        lda dir_start+0
         sta cluster+0
-        lda file_data+filedata::dir_start+1
+        lda dir_start+1
         sta cluster+1
-        lda file_data+filedata::dir_start+2
+        lda dir_start+2
         sta cluster+2
 
         ; If this is zero, the directory is empty
@@ -4694,8 +4750,68 @@ bad_name:
             rts
 
         @dir_match:
-            clc
+            jsr push_dir_entry
             rts
+
+.endproc
+
+; Set the root directory for seek in find_entry
+.proc set_root_directory
+
+    ; Set ATTR_DIRECTORY so find_entry doesn't return ENOTDIR
+    lda #ATTR_DIRECTORY
+    sta file_data+filedata::attributes
+
+    lda fs_type
+    cmp #32
+    beq @fat32
+        ; For FAT12 and FAT16, root directory has its own special area
+        lda #0
+        sta file_data+filedata::cluster_lo+0
+        sta file_data+filedata::cluster_lo+1
+        sta file_data+filedata::cluster_hi+0
+        sta file_data+filedata::cluster_hi+1
+        rts
+    @fat32:
+        ; For FAT32, root directory starts at a cluster
+        lda fs_root_dir+0
+        sta file_data+filedata::cluster_lo+0
+        lda fs_root_dir+1
+        sta file_data+filedata::cluster_lo+1
+        lda fs_root_dir+2
+        sta file_data+filedata::cluster_hi+0
+        lda fs_root_dir+3
+        sta file_data+filedata::cluster_hi+1
+        rts
+
+.endproc
+
+; Add a directory entry to the path in file_data
+.proc push_dir_entry
+
+    ldx file_data+filedata::num_components
+    cpx #MAX_COMPONENTS*4
+    bcs @path_full
+        lda file_data+filedata::dir_entry+0
+        sta file_data+filedata::components+0,x
+        lda file_data+filedata::dir_entry+1
+        sta file_data+filedata::components+1,x
+        lda file_data+filedata::dir_entry+2
+        sta file_data+filedata::components+2,x
+        lda file_data+filedata::dir_entry+3
+        sta file_data+filedata::components+3,x
+        inx
+        inx
+        inx
+        inx
+        stx file_data+filedata::num_components
+        clc
+        rts
+    @path_full:
+        ; Too many components
+        lda #$100-ENAMETOOLONG
+        sec
+        rts
 
 .endproc
 
