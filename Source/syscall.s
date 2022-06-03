@@ -309,7 +309,6 @@ DOS_CMD_GET_TIME   = $26
 .endproc
 
 ; SYS_faccessat    = bad_ecall
-; SYS_openat       = bad_ecall
 
 ; Close the given file handle
 ; A0 = file handle
@@ -1658,11 +1657,11 @@ lseek_location: .res 4
     lda _RISCV_ireg_1+REG_a0
     ora _RISCV_ireg_2+REG_a0
     ora _RISCV_ireg_3+REG_a0
-    bne check_file
+    jne bad_file
     lda _RISCV_ireg_0+REG_a0
     bne check_output
         ; Handle 0 (standard input)
-        lda #<%010000100100100  ; Character device, writable
+        lda #<%010000100100100  ; Character device, readable
         sta io_xfer+kernel_stat::st_mode+0
         lda #>%010000100100100
         sta io_xfer+kernel_stat::st_mode+1
@@ -1679,7 +1678,7 @@ lseek_location: .res 4
     sbc #3
     bcs check_file
         ; Handle 1 (standard output) or 2 (standard error)
-        lda #<%010000010010010  ; Character device, readable
+        lda #<%010000010010010  ; Character device, writable
         sta io_xfer+kernel_stat::st_mode+0
         lda #>%010000010010010
         sta io_xfer+kernel_stat::st_mode+1
@@ -1693,6 +1692,9 @@ lseek_location: .res 4
         jmp write_io_xfer
     check_file:
 
+        cmp #MAX_FILES
+        jcs bad_file
+
         ; Set pointer to file data
         sta file_handle
         tax
@@ -1702,6 +1704,7 @@ lseek_location: .res 4
         sta local_addr+1
 
         ; Check that the file is open
+        ldy #0
         lda (local_addr),y
         jeq bad_file
 
@@ -2694,6 +2697,7 @@ error:
 .endproc
 
 ; Open a file
+; Relative path starts from the current directory
 ; Path is in A0
 ; Open flags are in A1:
 ;     0       (O_RDONLY)
@@ -2708,8 +2712,203 @@ error:
 .global SYS_open
 .proc SYS_open
 
-    ; Check for invalid open flag
+    ; Set the starting directory to the current directory
+    jsr start_with_current_dir
+
+    ; Set the address of the file path
+    lda _RISCV_ireg_0+REG_a0
+    sta io_addr+0
+    lda _RISCV_ireg_1+REG_a0
+    sta io_addr+1
+    lda _RISCV_ireg_2+REG_a0
+    sta io_addr+2
+    lda _RISCV_ireg_3+REG_a0
+    sta io_addr+3
+
+    ; Set the open flags
     lda _RISCV_ireg_0+REG_a1
+    sta open_flags+0
+    lda _RISCV_ireg_1+REG_a1
+    sta open_flags+1
+    lda _RISCV_ireg_2+REG_a1
+    sta open_flags+2
+
+    ; Set the creation mode
+    lda _RISCV_ireg_0+REG_a2
+    sta open_mode+0
+
+    jmp open_common
+
+.endproc
+
+; Open a file
+; Relative path starts from the directory in A0
+; Path is in A1
+; Open flags are in A2:
+;     0       (O_RDONLY)
+;     1       (O_WRONLY)
+;     2       (O_RDWR)
+;     $0008   (O_APPEND)
+;     $0200   (O_CREAT)
+;     $0400   (O_TRUNC)
+;     $0800   (O_EXCL)
+;     $200000 (O_DIRECTORY)
+; Creation mode is in A3
+.global SYS_openat
+.proc SYS_openat
+
+    ; Start with the directory indicated by A0
+    jsr start_with_A0_dir
+    bcs @error
+
+    ; Set the address of the file path
+    lda _RISCV_ireg_0+REG_a1
+    sta io_addr+0
+    lda _RISCV_ireg_1+REG_a1
+    sta io_addr+1
+    lda _RISCV_ireg_2+REG_a1
+    sta io_addr+2
+    lda _RISCV_ireg_3+REG_a1
+    sta io_addr+3
+
+    ; Set the open flags
+    lda _RISCV_ireg_0+REG_a2
+    sta open_flags+0
+    lda _RISCV_ireg_1+REG_a2
+    sta open_flags+1
+    lda _RISCV_ireg_2+REG_a2
+    sta open_flags+2
+
+    ; Set the creation mode
+    lda _RISCV_ireg_0+REG_a3
+    sta open_mode+0
+
+    jmp open_common
+
+@error:
+    sta _RISCV_ireg_0+REG_a0
+    lda #$FF
+    sta _RISCV_ireg_1+REG_a0
+    sta _RISCV_ireg_2+REG_a0
+    sta _RISCV_ireg_3+REG_a0
+    rts
+
+.endproc
+
+.bss
+
+open_dir_num_components: .res 1
+open_dir: .res 4*MAX_COMPONENTS
+open_flags: .res 3
+open_mode: .res 1
+
+.code
+
+; Set the current directory into open_dir
+.proc start_with_current_dir
+
+    ldx fs_current_dir_num_components
+    stx open_dir_num_components
+    beq @end_copy
+    @copy:
+        lda fs_current_dir-1,x
+        sta open_dir,x
+    dex
+    bne @copy
+    @end_copy:
+    rts
+
+.endproc
+
+; Set the directory selected by A0 into open_dir
+; On error, set C and return -errno in A
+.proc start_with_A0_dir
+
+    ; Check for the constant AT_FDCWD, defined to -2 in Newlib
+    ; newlib/libc/include/sys/_default_fcntl.h
+    lda _RISCV_ireg_1+REG_a0
+    and _RISCV_ireg_2+REG_a0
+    and _RISCV_ireg_3+REG_a0
+    cmp #$FF
+    bne @use_dir_handle
+    lda _RISCV_ireg_0+REG_a0
+    cmp #$100-2
+    bne @use_dir_handle
+
+        ; Set the starting directory to the current directory
+        jmp start_with_current_dir
+
+    @use_dir_handle:
+
+        ; Must be a valid file handle
+        lda _RISCV_ireg_1+REG_a0
+        ora _RISCV_ireg_2+REG_a0
+        ora _RISCV_ireg_3+REG_a0
+        bne @bad_handle
+        lda _RISCV_ireg_0+REG_a0
+        sec
+        sbc #3
+        cmp #MAX_FILES
+        bcs @bad_handle
+        sta file_handle
+        tax
+
+        ; Set pointer to file data
+        lda open_files_lo,x
+        sta local_addr+0
+        lda open_files_hi,x
+        sta local_addr+1
+
+        ; Must be open to a directory
+        ldy #0
+        lda (local_addr),y
+        beq @bad_handle
+        ldy #filedata::attributes
+        lda (local_addr),y
+        and #ATTR_DIRECTORY
+        beq @bad_handle
+
+        ; Copy file path to open_dir
+        ldy #filedata::num_components
+        lda (local_addr),y
+        sta open_dir_num_components
+        beq @end_copy_2
+        ldy #filedata::components
+        ldx #0
+        @copy_2:
+            lda (local_addr),y
+            sta open_dir,x
+        iny
+        inx
+        cpx open_dir_num_components
+        bcc @copy_2
+        @end_copy_2:
+        clc
+        rts
+
+    @bad_handle:
+        sec
+        rts
+
+.endproc
+
+; Open a file: common to SYS_open and SYS_openat
+; Relative path starts from open_dir
+; Path is in io_addr
+; Open flags are in open_flags:
+;     0       (O_RDONLY)
+;     1       (O_WRONLY)
+;     2       (O_RDWR)
+;     $0008   (O_APPEND)
+;     $0200   (O_CREAT)
+;     $0400   (O_TRUNC)
+;     $0800   (O_EXCL)
+;     $200000 (O_DIRECTORY)
+; Creation mode is in open_mode
+.proc open_common
+
+    ; Check for invalid open flag
+    lda open_flags+0
     and #O_ACCMODE
     cmp #3
     bne mode_ok
@@ -2734,15 +2933,6 @@ error:
     handle_ok:
     stx file_handle
 
-    lda _RISCV_ireg_0+REG_a0
-    sta io_addr+0
-    lda _RISCV_ireg_1+REG_a0
-    sta io_addr+1
-    lda _RISCV_ireg_2+REG_a0
-    sta io_addr+2
-    lda _RISCV_ireg_3+REG_a0
-    sta io_addr+3
-
     ; Find the file with the given path
     jsr find_file
     bcc @found_file
@@ -2751,7 +2941,7 @@ error:
         ; on the last component of the file, go to the file creation path.
         cmp #$100-ENOENT
         bne @path_err        ; some other error
-        lda _RISCV_ireg_1+REG_a1
+        lda open_flags+1
         and #O_CREAT>>8
         beq @no_file         ; no O_CREAT flag
         jsr is_last_component
@@ -2781,11 +2971,11 @@ error:
     :
 
     ; Set open mode flags
-    lda _RISCV_ireg_0+REG_a1
+    lda open_flags+0
     sta file_data+filedata::open_flags+0
-    lda _RISCV_ireg_1+REG_a1
+    lda open_flags+1
     sta file_data+filedata::open_flags+1
-    lda _RISCV_ireg_2+REG_a1
+    lda open_flags+2
     sta file_data+filedata::open_flags+2
 
     ; Check the attribute bits for conflicts with the open flags
@@ -2987,11 +3177,11 @@ create_file:
     ; new directory entry.
 
     ; Set open mode flags
-    lda _RISCV_ireg_0+REG_a1
+    lda open_flags+0
     sta file_data+filedata::open_flags+0
-    lda _RISCV_ireg_1+REG_a1
+    lda open_flags+1
     sta file_data+filedata::open_flags+1
-    lda _RISCV_ireg_2+REG_a1
+    lda open_flags+2
     sta file_data+filedata::open_flags+2
 
     ; Address of temporary file data block, for allocate_cluster, set_mtime and
@@ -3136,7 +3326,7 @@ create_file:
     bne directory
         ; Normal file.
         ; If the creation mode contains any write bit, make the file writable
-        lda _RISCV_ireg_0+REG_a2
+        lda _RISCV_ireg_0+REG_a2 ;@@@
         and #%010010010
         beq @read_only
             ; Writable file
@@ -3253,11 +3443,11 @@ create_file:
     bpl @zero_loop
 
     ; Start at current directory unless absolute path
-    ldx fs_current_dir_num_components
+    ldx open_dir_num_components
     stx file_data+filedata::num_components
     beq @end_copy_current_dir
     @copy_current_dir:
-        lda fs_current_dir-1,x
+        lda open_dir-1,x
         sta file_data+filedata::components-1,x
     dex
     bne @copy_current_dir

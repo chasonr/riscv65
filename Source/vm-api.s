@@ -1516,7 +1516,7 @@ ecall_04:
 ; System calls supported by Newlib
 
 SYS_faccessat    = bad_ecall
-SYS_openat       = bad_ecall
+.import SYS_openat
 .import SYS_close
 .import SYS_lseek
 .import SYS_read

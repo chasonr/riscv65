@@ -6,6 +6,10 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
+extern int _openat(int dirfd, const char *name, int flags, int mode);
+extern int _faccessat(int dirfd, const char *file, int mode, int flags);
+extern int _fstatat(int dirfd, const char *file, struct stat *st, int flags);
+
 int
 main(void)
 {
@@ -30,8 +34,13 @@ main(void)
 #if 0
     int x;
 #endif
-    int fd = open(path, O_RDONLY, 0);
+    int fdd = open("/dir.1/dir.2", O_RDONLY|O_DIRECTORY, 0);
+    printf("fdd=%d\n", fdd);
+
+#if 1
+    int fd = _openat(fdd, "test.txt", O_RDONLY, 0);
     printf("len=%u open returns: %d\n", (unsigned)strlen(path), fd);
+#if 1
     struct stat st;
     memset(&st, 0, sizeof(st));
     int rc = fstat(fd, &st);
@@ -50,7 +59,10 @@ main(void)
     printf("st_atim = %ld\n", (long)st.st_atim.tv_sec);
     printf("st_ctim = %ld\n", (long)st.st_ctim.tv_sec);
     printf("st_mtim = %ld\n", (long)st.st_mtim.tv_sec);
+#endif
     close(fd);
+    close(fdd);
+#endif
 
 #if 0
     // Seek forward, from end
