@@ -1,4 +1,60 @@
-diff -U 3 -r newlib-4.1.0-original/newlib/libc/include/sys/_types.h newlib-4.1.0/newlib/libc/include/sys/_types.h
+diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/sys_chdir.c newlib-4.1.0/libgloss/riscv/sys_chdir.c
+--- newlib-4.1.0-original/libgloss/riscv/sys_chdir.c	2020-12-18 18:50:49.000000000 -0500
++++ newlib-4.1.0/libgloss/riscv/sys_chdir.c	2022-06-03 23:25:39.783614170 -0400
+@@ -1,8 +1,9 @@
+ #include <machine/syscall.h>
++#include "internal_syscall.h"
+ 
+-/* Stub.  */
++/* Set current directory.  */
+ int
+ _chdir(const char *path)
+ {
+-  return -1;
++  return syscall_errno (SYS_chdir, 1, (long)path, 0, 0, 0, 0, 0);
+ }
+diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/sys_getcwd.c newlib-4.1.0/libgloss/riscv/sys_getcwd.c
+--- newlib-4.1.0-original/libgloss/riscv/sys_getcwd.c	2020-12-18 18:50:49.000000000 -0500
++++ newlib-4.1.0/libgloss/riscv/sys_getcwd.c	2022-06-03 23:25:36.215540425 -0400
+@@ -1,9 +1,14 @@
+ #include <machine/syscall.h>
+ #include <sys/types.h>
++#include "internal_syscall.h"
+ 
+-/* Stub.  */
++/* Retrieve the current directory.  */
+ char *
+ _getcwd(char *buf, size_t size)
+ {
+-  return NULL;
++  /* The system call returns the length of the buffer, including the '\0',
++     or a negative error value... */
++  int rc = syscall_errno (SYS_getcwd, 2, (long)buf, size, 0, 0, 0, 0);
++  /* ...but the user-space function returns a pointer */
++  return rc > 0 ? buf : NULL;
+ }
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/include/reent.h newlib-4.1.0/newlib/libc/include/reent.h
+--- newlib-4.1.0-original/newlib/libc/include/reent.h	2020-12-18 18:50:49.000000000 -0500
++++ newlib-4.1.0/newlib/libc/include/reent.h	2022-06-03 21:48:24.057072095 -0400
+@@ -126,6 +126,8 @@
+ #define _wait_r(__reent, __status)                wait(__status)
+ #define _write_r(__reent, __fd, __buff, __cnt)    write(__fd, __buff, __cnt)
+ #define _gettimeofday_r(__reent, __tp, __tzp)     gettimeofday(__tp, __tzp)
++#define _chdir_r(__reent, __path)                 chdir(__path)
++#define _getcwd_r(__reent, __path, __size)        getcwd(__path, __size)
+ 
+ #ifdef __LARGE64_FILES
+ #define _lseek64_r(__reent, __fd, __off, __w)     lseek64(__fd, __off, __w)
+@@ -156,6 +158,8 @@
+ extern int _unlink_r (struct _reent *, const char *);
+ extern int _wait_r (struct _reent *, int *);
+ extern _ssize_t _write_r (struct _reent *, int, const void *, size_t);
++extern int _chdir_r (struct _reent *, const char *);
++extern char *_getcwd_r (struct _reent *, char *, size_t);
+ 
+ /* This one is not guaranteed to be available on all targets.  */
+ extern int _gettimeofday_r (struct _reent *, struct timeval *__tp, void *__tzp);
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/include/sys/_types.h newlib-4.1.0/newlib/libc/include/sys/_types.h
 --- newlib-4.1.0-original/newlib/libc/include/sys/_types.h	2020-12-18 18:50:49.000000000 -0500
 +++ newlib-4.1.0/newlib/libc/include/sys/_types.h	2022-05-30 20:30:35.441080989 -0400
 @@ -69,7 +69,7 @@
@@ -10,3 +66,316 @@ diff -U 3 -r newlib-4.1.0-original/newlib/libc/include/sys/_types.h newlib-4.1.0
  typedef unsigned long __ino_t;
  #else
  typedef unsigned short __ino_t;
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/reent/chdirr.c newlib-4.1.0/newlib/libc/reent/chdirr.c
+--- newlib-4.1.0-original/newlib/libc/reent/chdirr.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/newlib/libc/reent/chdirr.c	2022-06-03 23:26:55.343874018 -0400
+@@ -0,0 +1,56 @@
++/* Reentrant versions of chdir system call. */
++
++#include <reent.h>
++#include <unistd.h>
++#include <fcntl.h>
++#include <_syslist.h>
++
++/* Some targets provides their own versions of this functions.  Those
++   targets should define REENTRANT_SYSCALLS_PROVIDED in TARGET_CFLAGS.  */
++
++#ifdef _REENT_ONLY
++#ifndef REENTRANT_SYSCALLS_PROVIDED
++#define REENTRANT_SYSCALLS_PROVIDED
++#endif
++#endif
++
++#ifndef REENTRANT_SYSCALLS_PROVIDED
++
++/* We use the errno variable used by the system dependent layer.  */
++#undef errno
++extern int errno;
++
++extern int _chdir(const char *path);
++
++/*
++FUNCTION
++	<<_chdir_r>>---Reentrant version of chdir
++	
++INDEX
++	_chdir_r
++
++SYNOPSIS
++	#include <reent.h>
++	int _chdir_r(struct _reent *<[ptr]>,
++		    const char *<[path]>);
++
++DESCRIPTION
++	This is a reentrant version of <<chdir>>.  It
++	takes a pointer to the global data block, which holds
++	<<errno>>.
++*/
++
++int
++_chdir_r (struct _reent *ptr,
++     const char *path)
++{
++  int ret;
++
++  errno = 0;
++  if ((ret = _chdir (path)) == -1 && errno != 0)
++    ptr->_errno = errno;
++  return ret;
++}
++
++
++#endif /* ! defined (REENTRANT_SYSCALLS_PROVIDED) */
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/reent/getcwdr.c newlib-4.1.0/newlib/libc/reent/getcwdr.c
+--- newlib-4.1.0-original/newlib/libc/reent/getcwdr.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/newlib/libc/reent/getcwdr.c	2022-06-03 23:27:21.395523797 -0400
+@@ -0,0 +1,57 @@
++/* Reentrant versions of getcwd system call. */
++
++#include <reent.h>
++#include <unistd.h>
++#include <fcntl.h>
++#include <_syslist.h>
++
++/* Some targets provides their own versions of this functions.  Those
++   targets should define REENTRANT_SYSCALLS_PROVIDED in TARGET_CFLAGS.  */
++
++#ifdef _REENT_ONLY
++#ifndef REENTRANT_SYSCALLS_PROVIDED
++#define REENTRANT_SYSCALLS_PROVIDED
++#endif
++#endif
++
++#ifndef REENTRANT_SYSCALLS_PROVIDED
++
++/* We use the errno variable used by the system dependent layer.  */
++#undef errno
++extern int errno;
++
++extern char *_getcwd(char *buf, size_t size);
++
++/*
++FUNCTION
++	<<_getcwd_r>>---Reentrant version of getcwd
++	
++INDEX
++	_getcwd_r
++
++SYNOPSIS
++	#include <reent.h>
++	int _getcwd_r(struct _reent *<[ptr]>,
++		    char *<[path]>, size_t <[size]>);
++
++DESCRIPTION
++	This is a reentrant version of <<getcwd>>.  It
++	takes a pointer to the global data block, which holds
++	<<errno>>.
++*/
++
++char *
++_getcwd_r (struct _reent *ptr,
++     char *path,
++     size_t size)
++{
++  char *ret;
++
++  errno = 0;
++  if ((ret = _getcwd (path, size)) == NULL && errno != 0)
++    ptr->_errno = errno;
++  return ret;
++}
++
++
++#endif /* ! defined (REENTRANT_SYSCALLS_PROVIDED) */
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/reent/Makefile.am newlib-4.1.0/newlib/libc/reent/Makefile.am
+--- newlib-4.1.0-original/newlib/libc/reent/Makefile.am	2020-12-18 18:50:49.000000000 -0500
++++ newlib-4.1.0/newlib/libc/reent/Makefile.am	2022-06-03 21:57:39.189369281 -0400
+@@ -52,6 +52,8 @@
+ 	statr.c \
+ 	timesr.c \
+ 	unlinkr.c \
++	chdirr.c \
++	getcwdr.c \
+ 	writer.c
+ 
+ libreent_la_LDFLAGS = -Xcompiler -nostdlib
+@@ -87,6 +89,8 @@
+ 	statr.def \
+ 	timesr.def \
+ 	unlinkr.def \
++	chdirr.def \
++	getcwdr.def \
+ 	$(STDIO64_DEFS) \
+ 	writer.def
+ 
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/reent/Makefile.in newlib-4.1.0/newlib/libc/reent/Makefile.in
+--- newlib-4.1.0-original/newlib/libc/reent/Makefile.in	2020-12-18 18:50:49.000000000 -0500
++++ newlib-4.1.0/newlib/libc/reent/Makefile.in	2022-06-03 22:24:49.328896617 -0400
+@@ -82,6 +82,7 @@
+ 	lib_a-signalr.$(OBJEXT) lib_a-signgam.$(OBJEXT) \
+ 	lib_a-sbrkr.$(OBJEXT) lib_a-statr.$(OBJEXT) \
+ 	lib_a-timesr.$(OBJEXT) lib_a-unlinkr.$(OBJEXT) \
++	lib_a-chdirr.$(OBJEXT) lib_a-getcwdr.$(OBJEXT) \
+ 	lib_a-writer.$(OBJEXT)
+ @HAVE_STDIO64_DIR_TRUE@am__objects_2 = lib_a-fstat64r.$(OBJEXT) \
+ @HAVE_STDIO64_DIR_TRUE@	lib_a-lseek64r.$(OBJEXT) \
+@@ -102,7 +103,8 @@
+ am__objects_6 = closer.lo reent.lo impure.lo fcntlr.lo fstatr.lo \
+ 	getreent.lo gettimeofdayr.lo isattyr.lo linkr.lo lseekr.lo \
+ 	mkdirr.lo openr.lo readr.lo renamer.lo signalr.lo signgam.lo \
+-	sbrkr.lo statr.lo timesr.lo unlinkr.lo writer.lo
++	sbrkr.lo statr.lo timesr.lo unlinkr.lo chdirr.lo getcwdr.lo \
++	writer.lo
+ @HAVE_STDIO64_DIR_TRUE@am__objects_7 = fstat64r.lo lseek64r.lo \
+ @HAVE_STDIO64_DIR_TRUE@	stat64r.lo open64r.lo
+ am__objects_8 = $(am__objects_7)
+@@ -324,6 +326,8 @@
+ 	statr.c \
+ 	timesr.c \
+ 	unlinkr.c \
++	chdirr.c \
++	getcwdr.c \
+ 	writer.c
+ 
+ libreent_la_LDFLAGS = -Xcompiler -nostdlib
+@@ -362,6 +366,8 @@
+ 	statr.def \
+ 	timesr.def \
+ 	unlinkr.def \
++	chdirr.def \
++	getcwdr.def \
+ 	$(STDIO64_DEFS) \
+ 	writer.def
+ 
+@@ -555,6 +561,18 @@
+ lib_a-unlinkr.obj: unlinkr.c
+ 	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-unlinkr.obj `if test -f 'unlinkr.c'; then $(CYGPATH_W) 'unlinkr.c'; else $(CYGPATH_W) '$(srcdir)/unlinkr.c'; fi`
+ 
++lib_a-chdirr.o: chdirr.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-chdirr.o `test -f 'chdirr.c' || echo '$(srcdir)/'`chdirr.c
++
++lib_a-chdirr.obj: chdirr.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-chdirr.obj `if test -f 'chdirr.c'; then $(CYGPATH_W) 'chdirr.c'; else $(CYGPATH_W) '$(srcdir)/chdirr.c'; fi`
++
++lib_a-getcwdr.o: getcwdr.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-getcwdr.o `test -f 'getcwdr.c' || echo '$(srcdir)/'`getcwdr.c
++
++lib_a-getcwdr.obj: getcwdr.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-getcwdr.obj `if test -f 'getcwdr.c'; then $(CYGPATH_W) 'getcwdr.c'; else $(CYGPATH_W) '$(srcdir)/getcwdr.c'; fi`
++
+ lib_a-writer.o: writer.c
+ 	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-writer.o `test -f 'writer.c' || echo '$(srcdir)/'`writer.c
+ 
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/syscalls/Makefile.am newlib-4.1.0/newlib/libc/syscalls/Makefile.am
+--- newlib-4.1.0-original/newlib/libc/syscalls/Makefile.am	2020-12-18 18:50:49.000000000 -0500
++++ newlib-4.1.0/newlib/libc/syscalls/Makefile.am	2022-06-03 22:56:59.408935343 -0400
+@@ -5,9 +5,11 @@
+ INCLUDES = $(NEWLIB_CFLAGS) $(CROSS_CFLAGS) $(TARGET_CFLAGS)
+ 
+ GENERAL_SOURCES = \
++	syschdir.c  \
+ 	sysclose.c	\
+ 	sysfcntl.c	\
+ 	sysfstat.c	\
++	sysgetcwd.c \
+ 	sysgetpid.c	\
+ 	sysgettod.c	\
+ 	sysisatty.c	\
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/syscalls/Makefile.in newlib-4.1.0/newlib/libc/syscalls/Makefile.in
+--- newlib-4.1.0-original/newlib/libc/syscalls/Makefile.in	2020-12-18 18:50:49.000000000 -0500
++++ newlib-4.1.0/newlib/libc/syscalls/Makefile.in	2022-06-03 22:57:29.590710598 -0400
+@@ -72,8 +72,9 @@
+ ARFLAGS = cru
+ lib_a_AR = $(AR) $(ARFLAGS)
+ lib_a_LIBADD =
+-am__objects_1 = lib_a-sysclose.$(OBJEXT) lib_a-sysfcntl.$(OBJEXT) \
+-	lib_a-sysfstat.$(OBJEXT) lib_a-sysgetpid.$(OBJEXT) \
++am__objects_1 = lib_a-syschdir.$(OBJEXT) lib_a-sysclose.$(OBJEXT) \
++	lib_a-sysfcntl.$(OBJEXT) lib_a-sysfstat.$(OBJEXT) \
++	lib_a-sysgetcwd.$(OBJEXT) lib_a-sysgetpid.$(OBJEXT) \
+ 	lib_a-sysgettod.$(OBJEXT) lib_a-sysisatty.$(OBJEXT) \
+ 	lib_a-syskill.$(OBJEXT) lib_a-syslink.$(OBJEXT) \
+ 	lib_a-syslseek.$(OBJEXT) lib_a-sysopen.$(OBJEXT) \
+@@ -88,10 +89,10 @@
+ lib_a_OBJECTS = $(am_lib_a_OBJECTS)
+ LTLIBRARIES = $(noinst_LTLIBRARIES)
+ libsyscalls_la_LIBADD =
+-am__objects_3 = sysclose.lo sysfcntl.lo sysfstat.lo sysgetpid.lo \
+-	sysgettod.lo sysisatty.lo syskill.lo syslink.lo syslseek.lo \
+-	sysopen.lo sysread.lo syssbrk.lo sysstat.lo systimes.lo \
+-	sysunlink.lo syswrite.lo
++am__objects_3 = syschdir.lo sysclose.lo sysfcntl.lo sysfstat.lo \
++	sysgetcwd.lo sysgetpid.lo sysgettod.lo sysisatty.lo syskill.lo \
++	syslink.lo syslseek.lo sysopen.lo sysread.lo syssbrk.lo \
++	sysstat.lo systimes.lo sysunlink.lo syswrite.lo
+ @ELIX_LEVEL_1_FALSE@@ELIX_LEVEL_2_FALSE@am__objects_4 = sysexecve.lo \
+ @ELIX_LEVEL_1_FALSE@@ELIX_LEVEL_2_FALSE@	sysfork.lo syswait.lo
+ @USE_LIBTOOL_TRUE@am_libsyscalls_la_OBJECTS = $(am__objects_3) \
+@@ -269,9 +270,11 @@
+ AUTOMAKE_OPTIONS = cygnus
+ INCLUDES = $(NEWLIB_CFLAGS) $(CROSS_CFLAGS) $(TARGET_CFLAGS)
+ GENERAL_SOURCES = \
++	syschdir.c	\
+ 	sysclose.c	\
+ 	sysfcntl.c	\
+ 	sysfstat.c	\
++	sysgetcwd.c	\
+ 	sysgetpid.c	\
+ 	sysgettod.c	\
+ 	sysisatty.c	\
+@@ -388,6 +391,12 @@
+ lib_a-sysclose.obj: sysclose.c
+ 	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-sysclose.obj `if test -f 'sysclose.c'; then $(CYGPATH_W) 'sysclose.c'; else $(CYGPATH_W) '$(srcdir)/sysclose.c'; fi`
+ 
++lib_a-syschdir.o: syschdir.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-syschdir.o `test -f 'syschdir.c' || echo '$(srcdir)/'`syschdir.c
++
++lib_a-syschdir.obj: syschdir.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-syschdir.obj `if test -f 'syschdir.c'; then $(CYGPATH_W) 'syschdir.c'; else $(CYGPATH_W) '$(srcdir)/syschdir.c'; fi`
++
+ lib_a-sysfcntl.o: sysfcntl.c
+ 	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-sysfcntl.o `test -f 'sysfcntl.c' || echo '$(srcdir)/'`sysfcntl.c
+ 
+@@ -400,6 +409,12 @@
+ lib_a-sysfstat.obj: sysfstat.c
+ 	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-sysfstat.obj `if test -f 'sysfstat.c'; then $(CYGPATH_W) 'sysfstat.c'; else $(CYGPATH_W) '$(srcdir)/sysfstat.c'; fi`
+ 
++lib_a-sysgetcwd.o: sysgetcwd.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-sysgetcwd.o `test -f 'sysgetcwd.c' || echo '$(srcdir)/'`sysgetcwd.c
++
++lib_a-sysgetcwd.obj: sysgetcwd.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-sysgetcwd.obj `if test -f 'sysgetcwd.c'; then $(CYGPATH_W) 'sysgetcwd.c'; else $(CYGPATH_W) '$(srcdir)/sysgetcwd.c'; fi`
++
+ lib_a-sysgetpid.o: sysgetpid.c
+ 	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-sysgetpid.o `test -f 'sysgetpid.c' || echo '$(srcdir)/'`sysgetpid.c
+ 
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/syscalls/syschdir.c newlib-4.1.0/newlib/libc/syscalls/syschdir.c
+--- newlib-4.1.0-original/newlib/libc/syscalls/syschdir.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/newlib/libc/syscalls/syschdir.c	2022-06-03 22:53:42.268696301 -0400
+@@ -0,0 +1,11 @@
++/* connector for chdir */
++
++#include <reent.h>
++#include <unistd.h>
++
++int
++chdir (const char *path)
++{
++  return _chdir_r (_REENT, path);
++}
++
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/syscalls/sysgetcwd.c newlib-4.1.0/newlib/libc/syscalls/sysgetcwd.c
+--- newlib-4.1.0-original/newlib/libc/syscalls/sysgetcwd.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/newlib/libc/syscalls/sysgetcwd.c	2022-06-03 23:10:26.506269640 -0400
+@@ -0,0 +1,11 @@
++/* connector for getcwd */
++
++#include <reent.h>
++#include <unistd.h>
++
++char *
++getcwd (char *path, size_t size)
++{
++  return _getcwd_r (_REENT, path, size);
++}
++
