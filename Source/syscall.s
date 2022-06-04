@@ -2696,6 +2696,68 @@ error:
 
 .endproc
 
+; Change the current directory
+; Relative path starts from the current directory
+; Path is in A0
+.global SYS_chdir
+.proc SYS_chdir
+
+    ; Set the starting directory to the current directory
+    jsr start_with_current_dir
+
+    ; Set the address of the file path
+    lda _RISCV_ireg_0+REG_a0
+    sta io_addr+0
+    lda _RISCV_ireg_1+REG_a0
+    sta io_addr+1
+    lda _RISCV_ireg_2+REG_a0
+    sta io_addr+2
+    lda _RISCV_ireg_3+REG_a0
+    sta io_addr+3
+
+    ; Find the file
+    jsr find_file
+    bcs @find_failed
+
+    ; The found file must be a directory
+    lda file_data+filedata::attributes
+    and #ATTR_DIRECTORY
+    beq @not_directory
+
+    ; Copy directory path into fs_current_dir
+    ldx file_data+filedata::num_components
+    stx fs_current_dir_num_components
+    beq @end_copy
+    @copy:
+        lda file_data+filedata::components-1,x
+        sta fs_current_dir-1,x
+    dex
+    bne @copy
+    @end_copy:
+
+    ; Return success
+    lda #0
+    sta _RISCV_ireg_0+REG_a0
+    sta _RISCV_ireg_1+REG_a0
+    sta _RISCV_ireg_2+REG_a0
+    sta _RISCV_ireg_3+REG_a0
+    rts
+
+    ; Error exits
+@not_directory:         ; file was found but is not a directory
+    lda #$100-ENOTDIR
+    ; fall through
+
+@find_failed:           ; file was not found, or I/O error
+    sta _RISCV_ireg_0+REG_a0
+    lda #$FF
+    sta _RISCV_ireg_1+REG_a0
+    sta _RISCV_ireg_2+REG_a0
+    sta _RISCV_ireg_3+REG_a0
+    rts
+
+.endproc
+
 ; Open a file
 ; Relative path starts from the current directory
 ; Path is in A0
@@ -2812,7 +2874,7 @@ open_mode: .res 1
     beq @end_copy
     @copy:
         lda fs_current_dir-1,x
-        sta open_dir,x
+        sta open_dir-1,x
     dex
     bne @copy
     @end_copy:

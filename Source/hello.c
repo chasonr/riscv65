@@ -34,16 +34,16 @@ main(void)
 #if 0
     int x;
 #endif
-    int fdd = open("/dir.1/dir.2", O_RDONLY|O_DIRECTORY, 0);
-    printf("fdd=%d\n", fdd);
+    int rc = chdir("/dir.1/dir.2");
+    printf("chdir returns: %d\n", rc);
 
 #if 1
-    int fd = _openat(fdd, "test.txt", O_RDONLY, 0);
+    int fd = open("test.txt", O_RDONLY, 0);
     printf("len=%u open returns: %d\n", (unsigned)strlen(path), fd);
 #if 1
     struct stat st;
     memset(&st, 0, sizeof(st));
-    int rc = fstat(fd, &st);
+    rc = fstat(fd, &st);
     printf("rc = %d\n", rc);
     printf("st_dev = %ld\n", (long)st.st_dev);
     printf("sizeof(st_ino) = %lu\n", (unsigned long)sizeof(st.st_ino));
@@ -61,7 +61,6 @@ main(void)
     printf("st_mtim = %ld\n", (long)st.st_mtim.tv_sec);
 #endif
     close(fd);
-    close(fdd);
 #endif
 
 #if 0

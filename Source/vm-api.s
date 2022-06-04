@@ -1141,7 +1141,7 @@ ecall_00:
     .word bad_ecall        ;  14
     .word bad_ecall        ;  15
     .word bad_ecall        ;  16
-    .word SYS_getcwd       ;  17
+    .word SYS_getcwd       ;  17 (added)
     .word bad_ecall        ;  18
     .word bad_ecall        ;  19
     .word bad_ecall        ;  20
@@ -1173,7 +1173,7 @@ ecall_00:
     .word bad_ecall        ;  46
     .word bad_ecall        ;  47
     .word SYS_faccessat    ;  48 (supported)
-    .word SYS_chdir        ;  49
+    .word SYS_chdir        ;  49 (added)
     .word bad_ecall        ;  50
     .word bad_ecall        ;  51
     .word bad_ecall        ;  52
@@ -1533,12 +1533,15 @@ SYS_access       = bad_ecall
 SYS_stat         = bad_ecall
 SYS_lstat        = bad_ecall
 
-; System calls not currently supported by Newlib
+; System calls added to Newlib to support this VM
 
 SYS_getcwd       = bad_ecall
+.import SYS_chdir
+
+; System calls not currently supported by Newlib
+
 SYS_dup          = bad_ecall
 SYS_fcntl        = bad_ecall
-SYS_chdir        = bad_ecall
 SYS_getdents     = bad_ecall
 SYS_writev       = bad_ecall
 SYS_pread        = bad_ecall
