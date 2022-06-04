@@ -2758,6 +2758,177 @@ error:
 
 .endproc
 
+; Retrieve the current directory
+; Buffer to receive the path is in A0
+; Length is in A1
+.global SYS_getcwd
+.proc SYS_getcwd
+
+    ; If the length of the path is zero, return just "/"
+    lda fs_current_dir_num_components
+    bne @nonzero
+
+        lda #'/'
+        sta fs_path+0
+        lda #1
+        sta path_len
+        jmp @end
+
+    @nonzero:
+
+        ; Loop through one or more components
+        lda #0
+        sta path_len
+        sta component_count
+        @path_loop:
+
+            ; Seek to the directory entry
+            ldx component_count
+            lda fs_current_dir,x
+            sta seek_location+0
+            inx
+            lda fs_current_dir,x
+            sta seek_location+1
+            inx
+            lda fs_current_dir,x
+            sta seek_location+2
+            inx
+            lda fs_current_dir,x
+            sta seek_location+3
+            inx
+            stx component_count
+
+            jsr do_seek
+            jcs @io_error
+
+            ; Read it into io_xfer
+            lda #32
+            jsr read_bytes
+            jcs @io_error
+
+            ; Add the name to the path
+            ldy path_len
+            lda #'/'
+            sta fs_path,y
+            iny
+            ldx #0
+            @copy_name:
+                lda io_xfer+filedata::name,x
+                cmp #' '
+                beq @end_name
+                sta fs_path,y
+                iny
+            inx
+            cpx #8
+            bcc @copy_name
+            @end_name:
+
+            ; Add the extension
+            lda #'.'
+            sta fs_path,y
+            iny
+            ldx #0
+            @copy_ext:
+                lda io_xfer+filedata::name+8,x
+                cmp #' '
+                beq @end_ext
+                sta fs_path,y
+                iny
+            inx
+            cpx #3
+            bcc @copy_ext
+            @end_ext:
+            ; Avoid name ending in '.'
+            lda fs_path-1,y
+            cmp #'.'
+            bne :+
+                dey
+            :
+            sty path_len
+
+        lda component_count
+        cmp fs_current_dir_num_components
+        bcc @path_loop
+
+    @end:
+    ; Add the zero to the end of the path
+    ldy path_len
+    lda #0
+    sta fs_path,y
+    iny
+    sty path_len
+
+    ; Copy to io_xfer
+    @copy_path:
+        lda fs_path-1,y
+        sta io_xfer-1,y
+    dey
+    bne @copy_path
+
+    ; Compare path length to buffer length
+    lda _RISCV_ireg_1+REG_a1
+    ora _RISCV_ireg_2+REG_a1
+    ora _RISCV_ireg_3+REG_a1
+    bne @length_ok
+    lda _RISCV_ireg_0+REG_a1
+    cmp path_len
+    bcc @short_buf
+    @length_ok:
+
+    ; Set up transfer area
+    lda _RISCV_ireg_0+REG_a0
+    sta io_addr+0
+    lda _RISCV_ireg_1+REG_a0
+    sta io_addr+1
+    lda _RISCV_ireg_2+REG_a0
+    sta io_addr+2
+    lda _RISCV_ireg_3+REG_a0
+    sta io_addr+3
+    lda path_len
+    sta io_size+0
+    lda #0
+    sta io_size+1
+    sta io_size+2
+    sta io_size+3
+    jsr check_write
+    bcs @fault
+
+    jsr write_io_xfer
+    ; Return path length
+    lda path_len
+    sta _RISCV_ireg_0+REG_a0
+    lda #0
+    sta _RISCV_ireg_1+REG_a0
+    sta _RISCV_ireg_2+REG_a0
+    sta _RISCV_ireg_3+REG_a0
+    rts
+
+    @short_buf:
+        lda #$100-ERANGE
+        .byte $2C
+    @fault:
+        lda #$100-EFAULT
+        .byte $2C
+    @io_error:
+        lda #$100-EIO
+        ; fall through
+    @error:
+        sta _RISCV_ireg_0+REG_a0
+        lda #$FF
+        sta _RISCV_ireg_1+REG_a0
+        sta _RISCV_ireg_2+REG_a0
+        sta _RISCV_ireg_3+REG_a0
+        rts
+
+.bss
+
+path_len: .res 1
+component_count: .res 1
+
+.code
+
+.endproc
+
 ; Open a file
 ; Relative path starts from the current directory
 ; Path is in A0

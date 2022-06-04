@@ -1535,7 +1535,7 @@ SYS_lstat        = bad_ecall
 
 ; System calls added to Newlib to support this VM
 
-SYS_getcwd       = bad_ecall
+.import SYS_getcwd
 .import SYS_chdir
 
 ; System calls not currently supported by Newlib

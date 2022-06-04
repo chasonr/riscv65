@@ -34,8 +34,13 @@ main(void)
 #if 0
     int x;
 #endif
-    int rc = chdir("/dir.1/dir.2");
+    int rc = chdir("/dir.1");
     printf("chdir returns: %d\n", rc);
+    rc = chdir("dir.2");
+    printf("chdir returns: %d\n", rc);
+    char buf[512];
+    char *rcp = getcwd(buf, sizeof(buf));
+    printf("getcwd returns: %p %s\n", rcp, rcp ? buf : "");
 
 #if 1
     int fd = open("test.txt", O_RDONLY, 0);
