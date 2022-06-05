@@ -3316,6 +3316,10 @@ open_mode: .res 1
         lda file_data+filedata::cluster_hi+1
         sta cluster+3
         jsr delete_cluster_chain
+        bcc :+
+            set_errno
+            rts
+        :
         lda #0
         sta file_data+filedata::cluster_lo+0
         sta file_data+filedata::cluster_lo+1
@@ -3629,6 +3633,380 @@ create_file:
 
 .endproc
 
+; Delete a file
+; Path is in A0
+
+.global SYS_unlink
+.proc SYS_unlink
+
+    ; Set the starting directory to the current directory
+    jsr start_with_current_dir
+
+    ; Set the address of the file path
+    lda _RISCV_ireg_0+REG_a0
+    sta io_addr+0
+    lda _RISCV_ireg_1+REG_a0
+    sta io_addr+1
+    lda _RISCV_ireg_2+REG_a0
+    sta io_addr+2
+    lda _RISCV_ireg_3+REG_a0
+    sta io_addr+3
+
+    ; We don't have unlinkat yet, but this will make it easier
+    jmp unlink_common
+
+.endproc
+
+; Delete a file
+; Starting directory is set
+; Path is in io_addr
+
+.proc unlink_common
+
+    ; Find the file
+    jsr find_file
+    bcc :+
+        set_errno
+        rts
+    :
+
+    ; Is the file already open?
+    jsr is_open
+    bcc :+
+        set_errno EBUSY
+        rts
+    :
+
+    ; Is the file a directory?
+    lda file_data+filedata::attributes
+    and #ATTR_DIRECTORY
+    beq :+
+        set_errno EISDIR
+        rts
+    :
+
+    ; Remove the cluster chain
+    lda file_data+filedata::cluster_lo+0
+    sta cluster+0
+    lda file_data+filedata::cluster_lo+1
+    sta cluster+1
+    lda file_data+filedata::cluster_hi+0
+    sta cluster+2
+    lda file_data+filedata::cluster_hi+1
+    sta cluster+3
+    jsr delete_cluster_chain
+    bcc :+
+        set_errno
+        rts
+    :
+
+    ; Remove the directory entry
+    jsr delete_dir_entry
+    bcc :+
+        set_errno
+        rts
+    :
+
+    ; Return success
+    lda #0
+    sta _RISCV_ireg_0+REG_a0
+    sta _RISCV_ireg_1+REG_a0
+    sta _RISCV_ireg_2+REG_a0
+    sta _RISCV_ireg_3+REG_a0
+    rts
+
+.endproc
+
+; Return C set if the file in file_data is open
+
+.proc is_open
+
+    ldx MAX_FILES-1
+    @is_open_loop:
+
+        ; Pointer to a file data block
+        lda open_files_lo,x
+        sta local_addr+0
+        lda open_files_hi,x
+        sta local_addr+1
+        ; Skip if not open
+        ldy #0
+        lda (local_addr),y
+        beq @not_open
+
+        ; File is open if file_data::dir_entry == (local_addr)::dir_entry
+        ldy #filedata::dir_entry+0
+        lda file_data+filedata::dir_entry+0
+        cmp (local_addr),y
+        bne @not_open
+        iny
+        lda file_data+filedata::dir_entry+1
+        cmp (local_addr),y
+        bne @not_open
+        iny
+        lda file_data+filedata::dir_entry+2
+        cmp (local_addr),y
+        bne @not_open
+        iny
+        lda file_data+filedata::dir_entry+3
+        cmp (local_addr),y
+        beq @is_open
+
+    @not_open:
+    dex
+    bpl @is_open_loop
+
+    ; File is not open
+    clc
+    rts
+
+    ; File is open
+    @is_open:
+    sec
+    rts
+
+.endproc
+
+; Delete the directory entry loaded in file_path
+; Return C set if error, and -errno in A
+
+.proc delete_dir_entry
+
+    ; Delete LFN entries starting with lfn_entry and continue through
+    ; dir_entry (which is the short name entry).
+    ; Then delete dir_entry as well.
+    ; Use cluster_pos and cluster_ptr to traverse the cluster chain.
+
+    ; Convert lfn_entry to cluster and position:
+    ; Determine the cluster number
+    sec
+    lda file_data+filedata::lfn_entry+1
+    sbc fs_cluster_base+0
+    sta file_data+filedata::cluster_pos+0
+    lda file_data+filedata::lfn_entry+2
+    sbc fs_cluster_base+1
+    sta file_data+filedata::cluster_pos+1
+    lda file_data+filedata::lfn_entry+3
+    sbc fs_cluster_base+2
+    ; If cluster < 2, we're deleting from the root directory of FAT12 or FAT16
+    bcc @go_delete_from_root
+    ldx fs_cluster_shift
+    beq @end_rshift
+    @rshift:
+        lsr a
+        ror file_data+filedata::cluster_pos+1
+        ror file_data+filedata::cluster_pos+0
+    dex
+    bne @rshift
+    @end_rshift:
+    sta file_data+filedata::cluster_pos+2
+    ; If cluster < 2, we're deleting from the root directory of FAT12 or FAT16
+    lda file_data+filedata::cluster_pos+0
+    cmp #2
+    lda file_data+filedata::cluster_pos+1
+    sbc #0
+    lda file_data+filedata::cluster_pos+2
+    sbc #0
+    bcs :+
+    @go_delete_from_root:
+        jmp delete_from_root
+    :
+        ; Deleting from a cluster chain.
+        ; Determine the offset within the cluster
+        lda file_data+filedata::lfn_entry+0
+        sta file_data+filedata::cluster_ptr+0
+        sec
+        lda fs_cluster_size+0
+        sbc #1
+        and file_data+filedata::lfn_entry+1
+        sta file_data+filedata::cluster_ptr+1
+        lda fs_cluster_size+1
+        sbc #0
+        and file_data+filedata::lfn_entry+2
+        sta file_data+filedata::cluster_ptr+2
+
+        @delete_loop:
+            ; If cluster_ptr >= fs_cluster_size, go to next cluster
+            lda file_data+filedata::cluster_ptr+1
+            cmp fs_cluster_size+0
+            lda file_data+filedata::cluster_ptr+2
+            sbc fs_cluster_size+1
+            bcc @cluster_ok
+                lda file_data+filedata::cluster_pos+0
+                sta cluster+0
+                lda file_data+filedata::cluster_pos+1
+                sta cluster+1
+                lda file_data+filedata::cluster_pos+2
+                sta cluster+2
+                lda #0
+                sta cluster+3
+                jsr next_cluster
+                bcc :+
+                    set_errno
+                    rts
+                :
+                lda cluster+0
+                sta file_data+filedata::cluster_pos+0
+                lda cluster+1
+                sta file_data+filedata::cluster_pos+1
+                lda cluster+2
+                sta file_data+filedata::cluster_pos+2
+                lda #0
+                sta file_data+filedata::cluster_ptr+0
+                sta file_data+filedata::cluster_ptr+1
+                sta file_data+filedata::cluster_ptr+2
+            @cluster_ok:
+            ; Set the seek position:
+            ; Shift cluster number to byte count
+            lda file_data+filedata::cluster_pos+0
+            sta seek_location+1
+            lda file_data+filedata::cluster_pos+1
+            sta seek_location+2
+            lda file_data+filedata::cluster_pos+2
+            ldx fs_cluster_shift
+            beq @end_lshift
+            @lshift:
+                asl seek_location+1
+                rol seek_location+2
+                rol a
+            dex
+            bne @lshift
+            @end_lshift:
+            sta seek_location+3
+            ; Add the cluster base
+            clc
+            lda seek_location+1
+            adc fs_cluster_base+0
+            sta seek_location+1
+            lda seek_location+2
+            adc fs_cluster_base+1
+            sta seek_location+2
+            lda seek_location+3
+            adc fs_cluster_base+2
+            sta seek_location+3
+            ; Add the cluster offset
+            lda file_data+filedata::cluster_ptr+0
+            sta seek_location+0
+            clc
+            lda seek_location+1
+            adc file_data+filedata::cluster_ptr+1
+            sta seek_location+1
+            lda seek_location+2
+            adc file_data+filedata::cluster_ptr+2
+            sta seek_location+2
+            lda seek_location+3
+            adc #0
+            sta seek_location+3
+            ; Seek to the entry
+            jsr do_seek
+            bcc :+
+            @io_error:
+                set_errno EIO
+                rts
+            :
+            ; Write the deleted-entry marker
+            jsr begin_write
+            lda #$E5
+            sta CMD_DATA
+            jsr end_write
+            bcs @io_error
+
+            ; Advance to next entry
+            clc
+            lda file_data+filedata::cluster_ptr+0
+            adc #32
+            sta file_data+filedata::cluster_ptr+0
+            lda file_data+filedata::cluster_ptr+1
+            adc #0
+            sta file_data+filedata::cluster_ptr+1
+            lda file_data+filedata::cluster_ptr+2
+            adc #0
+            sta file_data+filedata::cluster_ptr+2
+
+        ; End the loop when we've written the short-name entry
+        lda seek_location+0
+        cmp file_data+filedata::dir_entry+0
+        bne @reloop
+        lda seek_location+1
+        cmp file_data+filedata::dir_entry+1
+        bne @reloop
+        lda seek_location+2
+        cmp file_data+filedata::dir_entry+2
+        bne @reloop
+        lda seek_location+3
+        cmp file_data+filedata::dir_entry+3
+        beq @end_loop
+        @reloop:
+        jmp @delete_loop
+        @end_loop:
+
+        clc
+        rts
+
+    delete_from_root:
+        ; Deleting from the root directory on FAT12 or FAT16.
+
+        ; Set the seek position
+        lda file_data+filedata::lfn_entry+0
+        sta seek_location+0
+        lda file_data+filedata::lfn_entry+1
+        sta seek_location+1
+        lda file_data+filedata::lfn_entry+2
+        sta seek_location+2
+        lda file_data+filedata::lfn_entry+3
+        sta seek_location+3
+        @delete_loop:
+            ; Seek to the entry
+            jsr do_seek
+            bcc :+
+            @io_error:
+                set_errno EIO
+                rts
+            :
+            ; Write the deleted-entry marker
+            jsr begin_write
+            lda #$E5
+            sta CMD_DATA
+            jsr end_write
+            bcs @io_error
+
+            ; End the loop when we've written the short-name entry
+            lda seek_location+0
+            cmp file_data+filedata::dir_entry+0
+            bne @reloop
+            lda seek_location+1
+            cmp file_data+filedata::dir_entry+1
+            bne @reloop
+            lda seek_location+2
+            cmp file_data+filedata::dir_entry+2
+            bne @reloop
+            lda seek_location+3
+            cmp file_data+filedata::dir_entry+3
+            beq @end_loop
+
+        @reloop:
+        ; Advance to next entry
+        clc
+        lda seek_location+0
+        adc #32
+        sta seek_location+0
+        lda seek_location+1
+        adc #0
+        sta seek_location+1
+        lda seek_location+2
+        adc #0
+        sta seek_location+2
+        lda seek_location+3
+        adc #0
+        sta seek_location+3
+        jmp @delete_loop
+        @end_loop:
+
+        clc
+        rts
+
+.endproc
+
 ; Find the file whose path is at the address in io_size
 ; Return C set if error, and -errno in A
 ; If the search failed on the last part of the file, is_last_component
@@ -3775,7 +4153,6 @@ dir_start: .res 4
 
 .endproc
 
-; SYS_unlink       = bad_ecall
 ; SYS_access       = bad_ecall
 ; SYS_stat         = bad_ecall
 ; SYS_lstat        = bad_ecall

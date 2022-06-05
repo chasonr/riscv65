@@ -31,6 +31,20 @@ main(void)
 #endif
 
     static const char path[] = "/dir.1/dir.2/test.txt";
+    errno = 0;
+    int rc = unlink(path);
+    printf("unlink returns: %d errno=%d\n", rc, errno);
+
+    FILE *fp = fopen("/deleteme.txt", "w");
+    if (fp != NULL) {
+        printf("Creating deleteme.txt\n");
+        fprintf(fp, "This is a file to be deleted\n");
+        fclose(fp);
+        errno = 0;
+        rc = unlink("/deleteme.txt");
+        printf("unlink returns: %d errno=%d\n", rc, errno);
+    }
+#if 0
 #if 0
     int x;
 #endif
@@ -66,6 +80,7 @@ main(void)
     printf("st_mtim = %ld\n", (long)st.st_mtim.tv_sec);
 #endif
     close(fd);
+#endif
 #endif
 
 #if 0

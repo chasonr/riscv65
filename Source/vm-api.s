@@ -1528,7 +1528,7 @@ SYS_exit         = _RISCV_exit
 .import SYS_brk
 .import SYS_open
 .import SYS_link
-SYS_unlink       = bad_ecall
+.import SYS_unlink
 SYS_access       = bad_ecall
 SYS_stat         = bad_ecall
 SYS_lstat        = bad_ecall
