@@ -1607,8 +1607,6 @@ lseek_location: .res 4
 
 .endproc
 
-; SYS_fstatat      = bad_ecall
-
 ; Return information about an open file handle
 ; A0 = file handle
 ; A1 = address of stat structure
@@ -1657,7 +1655,7 @@ lseek_location: .res 4
     lda _RISCV_ireg_1+REG_a0
     ora _RISCV_ireg_2+REG_a0
     ora _RISCV_ireg_3+REG_a0
-    jne bad_file
+    bne bad_file
     lda _RISCV_ireg_0+REG_a0
     bne check_output
         ; Handle 0 (standard input)
@@ -1693,7 +1691,7 @@ lseek_location: .res 4
     check_file:
 
         cmp #MAX_FILES
-        jcs bad_file
+        bcs bad_file
 
         ; Set pointer to file data
         sta file_handle
@@ -1706,144 +1704,246 @@ lseek_location: .res 4
         ; Check that the file is open
         ldy #0
         lda (local_addr),y
-        jeq bad_file
+        beq bad_file
 
-        ; "Inode number" is the location of the directory entry
-        ldy #filedata::dir_entry
-        lda (local_addr),y
-        sta io_xfer+kernel_stat::st_ino+0
-        iny
-        lda (local_addr),y
-        sta io_xfer+kernel_stat::st_ino+1
-        iny
-        lda (local_addr),y
-        sta io_xfer+kernel_stat::st_ino+2
-        iny
-        lda (local_addr),y
-        sta io_xfer+kernel_stat::st_ino+3
-
-        ; Block size
-        lda fs_cluster_shift
-        tax
-        lsr a
-        lsr a
-        lsr a
-        tay
-        txa
-        and #$07
-        tax
-        lda bit_shift,x
-        sta io_xfer+kernel_stat::st_blksize+1,y
-
-        ; Creation time
-        ldy #filedata::ctime_lo
-        lda (local_addr),y
-        sta dos_time+0
-        ldy #filedata::ctime
-        lda (local_addr),y
-        sta dos_time+1
-        iny
-        lda (local_addr),y
-        sta dos_time+2
-        ldy #filedata::cdate
-        lda (local_addr),y
-        sta dos_time+3
-        iny
-        lda (local_addr),y
-        sta dos_time+4
-        jsr dos_to_unix_time
-        ldx #11
-        @copy_1:
-            lda unix_time,x
-            sta io_xfer+kernel_stat::st_ctim,x
-        dex
-        bpl @copy_1
-
-        ; Modification time
-        lda #0
-        sta dos_time+0
-        ldy #filedata::mtime
-        lda (local_addr),y
-        sta dos_time+1
-        iny
-        lda (local_addr),y
-        sta dos_time+2
-        ldy #filedata::mdate
-        lda (local_addr),y
-        sta dos_time+3
-        iny
-        lda (local_addr),y
-        sta dos_time+4
-        jsr dos_to_unix_time
-        ldx #11
-        @copy_2:
-            lda unix_time,x
-            sta io_xfer+kernel_stat::st_mtim,x
-        dex
-        bpl @copy_2
-
-        ; The call will succeed
+        ; Return stat data for the file
+        jsr stat_file
         lda #0
         sta _RISCV_ireg_0+REG_a0
         sta _RISCV_ireg_1+REG_a0
         sta _RISCV_ireg_2+REG_a0
         sta _RISCV_ireg_3+REG_a0
-
-        ; File or directory?
-        ldy #filedata::attributes
-        lda (local_addr),y
-        and #ATTR_DIRECTORY
-        beq @regular_file
-
-            ; directory
-            lda #<%100000111111111 ; Directory, read, write, execute
-            sta io_xfer+kernel_stat::st_mode+0
-            lda #>%100000111111111
-            sta io_xfer+kernel_stat::st_mode+1
-
-            ; Set three links for directory: one for the directory and one
-            ; each for . and ..
-            lda #3
-            sta io_xfer+kernel_stat::st_nlink+0
-
-            jmp write_io_xfer
-
-        @regular_file:
-
-            ; regular file
-            ldx #%11111111      ; read, write, execute
-            lda (local_addr),y
-            and #ATTR_READONLY
-            beq @writable
-                ldx #%01101101  ; read, execute
-            @writable:
-            stx io_xfer+kernel_stat::st_mode+0
-            lda #1              ; The world-readable bit
-            sta io_xfer+kernel_stat::st_mode+1
-
-            ; Only one link
-            lda #1
-            sta io_xfer+kernel_stat::st_nlink+0
-
-            ; File size
-            ldy #filedata::size
-            lda (local_addr),y
-            sta io_xfer+kernel_stat::st_size+0
-            iny
-            lda (local_addr),y
-            sta io_xfer+kernel_stat::st_size+1
-            iny
-            lda (local_addr),y
-            sta io_xfer+kernel_stat::st_size+2
-            iny
-            lda (local_addr),y
-            sta io_xfer+kernel_stat::st_size+3
-
-            jmp write_io_xfer
+        rts
 
     bad_file:
         set_errno EBADF
         rts
+
+.endproc
+
+; Because no FAT file system supports hard links, SYS_lstat is the same
+; as SYS_stat
+.global SYS_lstat
+SYS_lstat = SYS_stat
+
+; Return "stat" information on a named file
+; Path is in A0
+; Pointer to stat structure is in A1
+.global SYS_stat
+.proc SYS_stat
+
+    ; Set the starting directory to the current directory
+    jsr start_with_current_dir
+
+    ; Set the address of the file path
+    lda _RISCV_ireg_0+REG_a0
+    sta io_addr+0
+    lda _RISCV_ireg_1+REG_a0
+    sta io_addr+1
+    lda _RISCV_ireg_2+REG_a0
+    sta io_addr+2
+    lda _RISCV_ireg_3+REG_a0
+    sta io_addr+3
+
+    ; Find the file
+    jsr find_file
+    bcc :+
+        set_errno
+        rts
+    :
+
+    ; Set up the transfer area
+    lda _RISCV_ireg_0+REG_a1
+    sta io_addr+0
+    lda _RISCV_ireg_1+REG_a1
+    sta io_addr+1
+    lda _RISCV_ireg_2+REG_a1
+    sta io_addr+2
+    lda _RISCV_ireg_3+REG_a1
+    sta io_addr+3
+    lda #kernel_stat_size
+    sta io_size+0
+    lda #0
+    sta io_size+1
+    sta io_size+2
+    sta io_size+3
+    jsr check_write
+    bcc :+
+        set_errno EFAULT
+        rts
+    :
+
+    ; Clear the transfer area
+    ldx #kernel_stat_size
+    lda #0
+    clear:
+        sta io_xfer-1,x
+    dex
+    bne clear
+    lda #$FF
+    ldx #11
+    minus_one:
+        sta io_xfer+kernel_stat::st_atim,x
+        sta io_xfer+kernel_stat::st_ctim,x
+        sta io_xfer+kernel_stat::st_mtim,x
+    dex
+    bpl minus_one
+
+    ; Get the stat info on this file
+    lda #<file_data
+    sta local_addr+0
+    lda #>file_data
+    sta local_addr+1
+    jsr stat_file
+    lda #0
+    sta _RISCV_ireg_0+REG_a0
+    sta _RISCV_ireg_1+REG_a0
+    sta _RISCV_ireg_2+REG_a0
+    sta _RISCV_ireg_3+REG_a0
+    rts
+
+.endproc
+
+; Do stat on the file described in (local_addr)
+; This always succeeds
+.proc stat_file
+
+    ; "Inode number" is the location of the directory entry
+    ldy #filedata::dir_entry
+    lda (local_addr),y
+    sta io_xfer+kernel_stat::st_ino+0
+    iny
+    lda (local_addr),y
+    sta io_xfer+kernel_stat::st_ino+1
+    iny
+    lda (local_addr),y
+    sta io_xfer+kernel_stat::st_ino+2
+    iny
+    lda (local_addr),y
+    sta io_xfer+kernel_stat::st_ino+3
+
+    ; Block size
+    lda fs_cluster_shift
+    tax
+    lsr a
+    lsr a
+    lsr a
+    tay
+    txa
+    and #$07
+    tax
+    lda bit_shift,x
+    sta io_xfer+kernel_stat::st_blksize+1,y
+
+    ; Creation time
+    ldy #filedata::ctime_lo
+    lda (local_addr),y
+    sta dos_time+0
+    ldy #filedata::ctime
+    lda (local_addr),y
+    sta dos_time+1
+    iny
+    lda (local_addr),y
+    sta dos_time+2
+    ldy #filedata::cdate
+    lda (local_addr),y
+    sta dos_time+3
+    iny
+    lda (local_addr),y
+    sta dos_time+4
+    jsr dos_to_unix_time
+    ldx #11
+    @copy_1:
+        lda unix_time,x
+        sta io_xfer+kernel_stat::st_ctim,x
+    dex
+    bpl @copy_1
+
+    ; Modification time
+    lda #0
+    sta dos_time+0
+    ldy #filedata::mtime
+    lda (local_addr),y
+    sta dos_time+1
+    iny
+    lda (local_addr),y
+    sta dos_time+2
+    ldy #filedata::mdate
+    lda (local_addr),y
+    sta dos_time+3
+    iny
+    lda (local_addr),y
+    sta dos_time+4
+    jsr dos_to_unix_time
+    ldx #11
+    @copy_2:
+        lda unix_time,x
+        sta io_xfer+kernel_stat::st_mtim,x
+    dex
+    bpl @copy_2
+
+    ; File or directory?
+    ldy #filedata::attributes
+    lda (local_addr),y
+    and #ATTR_DIRECTORY
+    beq @regular_file
+
+        ; directory
+        lda #<%100000111111111 ; Directory, read, write, execute
+        sta io_xfer+kernel_stat::st_mode+0
+        lda #>%100000111111111
+        sta io_xfer+kernel_stat::st_mode+1
+
+        ; Set two links for directory: one for the directory and one
+        ; for its . entry
+        ; There really should be another for the .. from each subdirectory,
+        ; but that adds complexity
+        lda #2
+        sta io_xfer+kernel_stat::st_nlink+0
+
+        ; Size is unknown
+        ldy #filedata::size
+        lda #0
+        sta io_xfer+kernel_stat::st_size+0
+        sta io_xfer+kernel_stat::st_size+1
+        sta io_xfer+kernel_stat::st_size+2
+        sta io_xfer+kernel_stat::st_size+3
+
+        bne @end
+
+    @regular_file:
+
+        ; regular file
+        ldx #%11111111      ; read, write, execute
+        lda (local_addr),y
+        and #ATTR_READONLY
+        beq @writable
+            ldx #%01101101  ; read, execute
+        @writable:
+        stx io_xfer+kernel_stat::st_mode+0
+        lda #1              ; The world-readable bit
+        sta io_xfer+kernel_stat::st_mode+1
+
+        ; Only one link
+        lda #1
+        sta io_xfer+kernel_stat::st_nlink+0
+
+        ; File size
+        ldy #filedata::size
+        lda (local_addr),y
+        sta io_xfer+kernel_stat::st_size+0
+        iny
+        lda (local_addr),y
+        sta io_xfer+kernel_stat::st_size+1
+        iny
+        lda (local_addr),y
+        sta io_xfer+kernel_stat::st_size+2
+        iny
+        lda (local_addr),y
+        sta io_xfer+kernel_stat::st_size+3
+
+    @end:
+    jmp write_io_xfer
 
 .endproc
 
@@ -2012,7 +2112,7 @@ bit_shift: .byte $01, $02, $04, $08, $10, $20, $40, $80
     ; Add hours from component time
     lda dos_hour
     cmp #24
-    jcs @bad_time_1
+    bcs @bad_time_1
     clc
     adc unix_time+2
     sta unix_time+0
@@ -3563,7 +3663,7 @@ create_file:
     bne directory
         ; Normal file.
         ; If the creation mode contains any write bit, make the file writable
-        lda _RISCV_ireg_0+REG_a2 ;@@@
+        lda _RISCV_ireg_0+REG_a2
         and #%010010010
         beq @read_only
             ; Writable file
@@ -4014,23 +4114,6 @@ create_file:
 
 .proc find_file
 
-    ; Set up the transfer area
-    ; We don't know the length in advance. Check that we can read at least
-    ; one byte. read_path will check that the path does not exceed readable
-    ; space.
-    lda #1
-    sta io_size+0
-    lda #0
-    sta io_size+1
-    sta io_size+2
-    sta io_size+3
-    jsr check_read
-    bcc @read_ok
-        lda #$100-EFAULT
-        sec
-        rts
-    @read_ok:
-
     ; Read path into fs_path
     jsr read_path
     bcc @path_ok
@@ -4154,8 +4237,6 @@ dir_start: .res 4
 .endproc
 
 ; SYS_access       = bad_ecall
-; SYS_stat         = bad_ecall
-; SYS_lstat        = bad_ecall
 
 ; Check the configured address and size for valid write
 ; Set C if address and size are invalid
@@ -4915,6 +4996,23 @@ title_info_sector: .asciiz "fs_info_sector="
 ; Possible errno values are ENAMETOOLONG and EFAULT.
 
 .proc read_path
+
+    ; Set up the transfer area
+    ; We don't know the length in advance. Check that we can read at least
+    ; one byte. read_path will check that the path does not exceed readable
+    ; space.
+    lda #1
+    sta io_size+0
+    lda #0
+    sta io_size+1
+    sta io_size+2
+    sta io_size+3
+    jsr check_read
+    bcc @read_ok
+        lda #$100-EFAULT
+        sec
+        rts
+    @read_ok:
 
     ; Set size to filename_max+1
     lda #<(filename_max+1)
@@ -7179,7 +7277,6 @@ pet_to_ascii:
     .byte $D0,$D1,$D2,$D3,$D4,$D5,$D6,$D7,$D8,$D9,$DA,$DB,$DC,$DD,$DE,$DF
     .byte $E0,$E1,$E2,$E3,$E4,$E5,$E6,$E7,$E8,$E9,$EA,$EB,$EC,$ED,$EE,$EF
     .byte $F0,$F1,$F2,$F3,$F4,$F5,$F6,$F7,$F8,$F9,$FA,$FB,$FC,$FD,$FE,$FF
-
 ; Conversion table for characters in short file names
 ; 0 indicates an invalid character
 ; Otherwise, convert lower to upper case and replace $E5 with $05

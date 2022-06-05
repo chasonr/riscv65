@@ -30,6 +30,7 @@ main(void)
     printf("input string is \"%s\"", str);
 #endif
 
+#if 0
     static const char path[] = "/dir.1/dir.2/test.txt";
     errno = 0;
     int rc = unlink(path);
@@ -44,6 +45,7 @@ main(void)
         rc = unlink("/deleteme.txt");
         printf("unlink returns: %d errno=%d\n", rc, errno);
     }
+#endif
 #if 0
 #if 0
     int x;
@@ -55,14 +57,17 @@ main(void)
     char buf[512];
     char *rcp = getcwd(buf, sizeof(buf));
     printf("getcwd returns: %p %s\n", rcp, rcp ? buf : "");
+#endif
 
-#if 1
+#if 0
     int fd = open("test.txt", O_RDONLY, 0);
     printf("len=%u open returns: %d\n", (unsigned)strlen(path), fd);
+#endif
 #if 1
     struct stat st;
-    memset(&st, 0, sizeof(st));
-    rc = fstat(fd, &st);
+    //memset(&st, 0, sizeof(st));
+    chdir("/dir.1/dir.2");
+    int rc = stat("test.txt", &st);
     printf("rc = %d\n", rc);
     printf("st_dev = %ld\n", (long)st.st_dev);
     printf("sizeof(st_ino) = %lu\n", (unsigned long)sizeof(st.st_ino));
@@ -79,8 +84,8 @@ main(void)
     printf("st_ctim = %ld\n", (long)st.st_ctim.tv_sec);
     printf("st_mtim = %ld\n", (long)st.st_mtim.tv_sec);
 #endif
+#if 0
     close(fd);
-#endif
 #endif
 
 #if 0

@@ -1515,13 +1515,11 @@ ecall_04:
 
 ; System calls supported by Newlib
 
-SYS_faccessat    = bad_ecall
 .import SYS_openat
 .import SYS_close
 .import SYS_lseek
 .import SYS_read
 .import SYS_write
-SYS_fstatat      = bad_ecall
 .import SYS_fstat
 SYS_exit         = _RISCV_exit
 .import SYS_gettimeofday
@@ -1530,13 +1528,17 @@ SYS_exit         = _RISCV_exit
 .import SYS_link
 .import SYS_unlink
 SYS_access       = bad_ecall
-SYS_stat         = bad_ecall
-SYS_lstat        = bad_ecall
+.import SYS_stat
+.import SYS_lstat
 
 ; System calls added to Newlib to support this VM
 
 .import SYS_getcwd
 .import SYS_chdir
+
+; System calls called by Newlib but not supported here
+SYS_faccessat = bad_ecall
+SYS_fstatat   = bad_ecall
 
 ; System calls not currently supported by Newlib
 
