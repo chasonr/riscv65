@@ -134,15 +134,19 @@ EWOULDBLOCK     = EAGAIN ; Operation would block
 ; ESTRPIPE = 143  ; Streams pipe error
 ; #endif
 
+; Set errno from the parameter if given, or from A if no parameter given
+; If no parameter, A must be set to $100-errno
+
 .macro set_errno err
 
-    lda #((-err) >>  0) & $FF
+    .ifnblank err
+        ; set errno from err
+        lda #$100-err
+    .endif
     sta _RISCV_ireg_0+REG_a0
-    lda #((-err) >>  8) & $FF
+    lda #$FF
     sta _RISCV_ireg_1+REG_a0
-    lda #((-err) >> 16) & $FF
     sta _RISCV_ireg_2+REG_a0
-    lda #((-err) >> 24) & $FF
     sta _RISCV_ireg_3+REG_a0
 
 .endmacro
