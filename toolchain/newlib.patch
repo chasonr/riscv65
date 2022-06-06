@@ -66,6 +66,139 @@ diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/include/sys/_types.h newlib-4.
  typedef unsigned long __ino_t;
  #else
  typedef unsigned short __ino_t;
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/access.c newlib-4.1.0/newlib/libc/machine/riscv/access.c
+--- newlib-4.1.0-original/newlib/libc/machine/riscv/access.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/newlib/libc/machine/riscv/access.c	2022-06-05 19:39:33.192439523 -0400
+@@ -0,0 +1,15 @@
++/* connector for access */
++
++#include <reent.h>
++#include <unistd.h>
++
++extern int _access_r (struct _reent *ptr,
++     const char *path,
++     int mode);
++
++int
++access (const char *path, int mode)
++{
++  return _access_r (_REENT, path, mode);
++}
++
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/accessr.c newlib-4.1.0/newlib/libc/machine/riscv/accessr.c
+--- newlib-4.1.0-original/newlib/libc/machine/riscv/accessr.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/newlib/libc/machine/riscv/accessr.c	2022-06-05 19:36:44.353104557 -0400
+@@ -0,0 +1,57 @@
++/* Reentrant versions of access system call. */
++
++#include <reent.h>
++#include <unistd.h>
++#include <fcntl.h>
++#include <_syslist.h>
++
++/* Some targets provides their own versions of this functions.  Those
++   targets should define REENTRANT_SYSCALLS_PROVIDED in TARGET_CFLAGS.  */
++
++#ifdef _REENT_ONLY
++#ifndef REENTRANT_SYSCALLS_PROVIDED
++#define REENTRANT_SYSCALLS_PROVIDED
++#endif
++#endif
++
++#ifndef REENTRANT_SYSCALLS_PROVIDED
++
++/* We use the errno variable used by the system dependent layer.  */
++#undef errno
++extern int errno;
++
++extern int _access(const char *path, int mode);
++
++/*
++FUNCTION
++	<<_access_r>>---Reentrant version of access
++	
++INDEX
++	_access_r
++
++SYNOPSIS
++	#include <reent.h>
++	int _chdir_r(struct _reent *<[ptr]>,
++		    const char *<[path]>);
++
++DESCRIPTION
++	This is a reentrant version of <<access>>.  It
++	takes a pointer to the global data block, which holds
++	<<errno>>.
++*/
++
++int
++_access_r (struct _reent *ptr,
++     const char *path,
++     int mode)
++{
++  int ret;
++
++  errno = 0;
++  if ((ret = _access (path, mode)) == -1 && errno != 0)
++    ptr->_errno = errno;
++  return ret;
++}
++
++
++#endif /* ! defined (REENTRANT_SYSCALLS_PROVIDED) */
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/Makefile.am newlib-4.1.0/newlib/libc/machine/riscv/Makefile.am
+--- newlib-4.1.0-original/newlib/libc/machine/riscv/Makefile.am	2020-12-18 18:50:49.000000000 -0500
++++ newlib-4.1.0/newlib/libc/machine/riscv/Makefile.am	2022-06-05 19:32:48.477846117 -0400
+@@ -9,7 +9,7 @@
+ noinst_LIBRARIES = lib.a
+ 
+ lib_a_SOURCES = memmove.S memmove-stub.c memset.S memcpy-asm.S memcpy.c strlen.c \
+-	strcpy.c strcmp.S setjmp.S ieeefp.c ffs.c
++	strcpy.c strcmp.S setjmp.S ieeefp.c ffs.c access.c accessr.c
+ lib_a_CCASFLAGS=$(AM_CCASFLAGS)
+ lib_a_CFLAGS=$(AM_CFLAGS)
+ 
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/Makefile.in newlib-4.1.0/newlib/libc/machine/riscv/Makefile.in
+--- newlib-4.1.0-original/newlib/libc/machine/riscv/Makefile.in	2020-12-18 18:50:49.000000000 -0500
++++ newlib-4.1.0/newlib/libc/machine/riscv/Makefile.in	2022-06-05 19:34:03.853638344 -0400
+@@ -74,7 +74,8 @@
+ 	lib_a-memcpy-asm.$(OBJEXT) lib_a-memcpy.$(OBJEXT) \
+ 	lib_a-strlen.$(OBJEXT) lib_a-strcpy.$(OBJEXT) \
+ 	lib_a-strcmp.$(OBJEXT) lib_a-setjmp.$(OBJEXT) \
+-	lib_a-ieeefp.$(OBJEXT) lib_a-ffs.$(OBJEXT)
++	lib_a-ieeefp.$(OBJEXT) lib_a-ffs.$(OBJEXT) \
++	lib_a-access.$(OBJEXT) lib_a-accessr.$(OBJEXT)
+ lib_a_OBJECTS = $(am_lib_a_OBJECTS)
+ DEFAULT_INCLUDES = -I.@am__isrc@
+ depcomp =
+@@ -201,7 +202,7 @@
+ AM_CCASFLAGS = $(INCLUDES)
+ noinst_LIBRARIES = lib.a
+ lib_a_SOURCES = memmove.S memmove-stub.c memset.S memcpy-asm.S memcpy.c strlen.c \
+-	strcpy.c strcmp.S setjmp.S ieeefp.c ffs.c
++	strcpy.c strcmp.S setjmp.S ieeefp.c ffs.c access.c accessr.c
+ 
+ lib_a_CCASFLAGS = $(AM_CCASFLAGS)
+ lib_a_CFLAGS = $(AM_CFLAGS)
+@@ -337,6 +338,18 @@
+ lib_a-ffs.obj: ffs.c
+ 	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-ffs.obj `if test -f 'ffs.c'; then $(CYGPATH_W) 'ffs.c'; else $(CYGPATH_W) '$(srcdir)/ffs.c'; fi`
+ 
++lib_a-access.o: access.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-access.o `test -f 'access.c' || echo '$(srcdir)/'`access.c
++
++lib_a-access.obj: access.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-access.obj `if test -f 'access.c'; then $(CYGPATH_W) 'access.c'; else $(CYGPATH_W) '$(srcdir)/access.c'; fi`
++
++lib_a-accessr.o: accessr.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-accessr.o `test -f 'accessr.c' || echo '$(srcdir)/'`accessr.c
++
++lib_a-accessr.obj: accessr.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-accessr.obj `if test -f 'accessr.c'; then $(CYGPATH_W) 'accessr.c'; else $(CYGPATH_W) '$(srcdir)/accessr.c'; fi`
++
+ ID: $(HEADERS) $(SOURCES) $(LISP) $(TAGS_FILES)
+ 	list='$(SOURCES) $(HEADERS) $(LISP) $(TAGS_FILES)'; \
+ 	unique=`for i in $$list; do \
 diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/reent/chdirr.c newlib-4.1.0/newlib/libc/reent/chdirr.c
 --- newlib-4.1.0-original/newlib/libc/reent/chdirr.c	1969-12-31 19:00:00.000000000 -0500
 +++ newlib-4.1.0/newlib/libc/reent/chdirr.c	2022-06-03 23:26:55.343874018 -0400
