@@ -1521,13 +1521,13 @@ ecall_04:
 .import SYS_read
 .import SYS_write
 .import SYS_fstat
-SYS_exit         = _RISCV_exit
+SYS_exit = _RISCV_exit
 .import SYS_gettimeofday
 .import SYS_brk
 .import SYS_open
 .import SYS_link
 .import SYS_unlink
-SYS_access       = bad_ecall
+.import SYS_access
 .import SYS_stat
 .import SYS_lstat
 

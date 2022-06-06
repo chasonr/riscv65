@@ -54,9 +54,6 @@ main(void)
     printf("chdir returns: %d\n", rc);
     rc = chdir("dir.2");
     printf("chdir returns: %d\n", rc);
-    char buf[512];
-    char *rcp = getcwd(buf, sizeof(buf));
-    printf("getcwd returns: %p %s\n", rcp, rcp ? buf : "");
 #endif
 
 #if 0
@@ -67,8 +64,21 @@ main(void)
     struct stat st;
     //memset(&st, 0, sizeof(st));
     chdir("/dir.1/dir.2");
-    int rc = stat("test.txt", &st);
-    printf("rc = %d\n", rc);
+    char buf[512];
+    char *rcp = getcwd(buf, sizeof(buf));
+    printf("getcwd returns: %p %s\n", rcp, rcp ? buf : "");
+    int rc = access("test.txt", 0);
+    printf("test.txt: rc = %d\n", rc);
+    rcp = getcwd(buf, sizeof(buf));
+    printf("getcwd returns: %p %s\n", rcp, rcp ? buf : "");
+    errno = 0;
+    rc = access("test.txt", 0);
+    printf("test.txt: rc = %d errno = %d\n", rc, errno);
+    errno = 0;
+    rc = access("bogus.txt", 0);
+    printf("bogus.txt: rc = %d errno = %d\n", rc, errno);
+#endif
+#if 0
     printf("st_dev = %ld\n", (long)st.st_dev);
     printf("sizeof(st_ino) = %lu\n", (unsigned long)sizeof(st.st_ino));
     printf("st_ino = %ld\n", (long)st.st_ino);

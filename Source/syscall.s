@@ -308,8 +308,6 @@ DOS_CMD_GET_TIME   = $26
 
 .endproc
 
-; SYS_faccessat    = bad_ecall
-
 ; Close the given file handle
 ; A0 = file handle
 .global SYS_close
@@ -4181,11 +4179,19 @@ create_file:
         ; Get the directory entry
         jsr do_seek
         bcs @io_error
-        jsr read_dir_entry
+        lda #32
+        jsr read_bytes
         bcc @got_dir
         @io_error:
+            lda #$100-EIO
             rts
     @got_dir:
+    ldx #31
+    @copy:
+        lda io_xfer,x
+        sta file_data,x
+    dex
+    bpl @copy
 
     @path_loop:
         lda file_data+filedata::cluster_lo+0
@@ -4236,7 +4242,59 @@ dir_start: .res 4
 
 .endproc
 
-; SYS_access       = bad_ecall
+; Check a file for accessibility
+; Path is in A0
+; Access flags are in A1:
+; X_OK 1
+; W_OK 2
+; R_OK 4
+.global SYS_access
+.proc SYS_access
+
+    ; Set the starting directory to the current directory
+    jsr start_with_current_dir
+
+    ; Set the address of the file path
+    lda _RISCV_ireg_0+REG_a0
+    sta io_addr+0
+    lda _RISCV_ireg_1+REG_a0
+    sta io_addr+1
+    lda _RISCV_ireg_2+REG_a0
+    sta io_addr+2
+    lda _RISCV_ireg_3+REG_a0
+    sta io_addr+3
+
+    ; Set the access flags
+    lda _RISCV_ireg_0+REG_a1
+    sta open_flags+0
+
+    ; Find the file
+    jsr find_file
+    bcc :+
+        set_errno
+        rts
+    :
+
+    ; If W_OK, check that the file is writable
+    lda open_flags+0
+    and #$02
+    beq @file_ok ; proceed if W_OK
+    lda file_data+filedata::attributes
+    and #ATTR_READONLY
+    beq @file_ok ; proceed if read only
+        ; W_OK requested but the file is read-only
+        set_errno EACCES
+        rts
+
+    @file_ok:
+    lda #0
+    sta _RISCV_ireg_0+REG_a0
+    sta _RISCV_ireg_1+REG_a0
+    sta _RISCV_ireg_2+REG_a0
+    sta _RISCV_ireg_3+REG_a0
+    rts
+
+.endproc
 
 ; Check the configured address and size for valid write
 ; Set C if address and size are invalid
