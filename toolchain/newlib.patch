@@ -1,6 +1,6 @@
 diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/machine/syscall.h newlib-4.1.0/libgloss/riscv/machine/syscall.h
 --- newlib-4.1.0-original/libgloss/riscv/machine/syscall.h	2020-12-18 18:50:49.000000000 -0500
-+++ newlib-4.1.0/libgloss/riscv/machine/syscall.h	2022-06-07 21:18:27.351735505 -0400
++++ newlib-4.1.0/libgloss/riscv/machine/syscall.h	2022-06-09 20:49:22.063354504 -0400
 @@ -52,6 +52,7 @@
  #define SYS_stat 1038
  #define SYS_lstat 1039
@@ -11,8 +11,12 @@ diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/machine/syscall.h newlib-4.
  /* Semihosting operations.  */
 diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/Makefile.in newlib-4.1.0/libgloss/riscv/Makefile.in
 --- newlib-4.1.0-original/libgloss/riscv/Makefile.in	2020-12-18 18:50:49.000000000 -0500
-+++ newlib-4.1.0/libgloss/riscv/Makefile.in	2022-06-07 21:19:21.977519074 -0400
-@@ -31,6 +31,7 @@
++++ newlib-4.1.0/libgloss/riscv/Makefile.in	2022-06-09 20:30:33.376781317 -0400
+@@ -28,9 +28,11 @@
+ 	sys_link.c \
+ 	sys_lseek.c \
+ 	sys_lstat.c \
++	sys_mkdir.c \
  	sys_openat.c \
  	sys_open.c \
  	sys_read.c \
@@ -20,6 +24,14 @@ diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/Makefile.in newlib-4.1.0/li
  	sys_sbrk.c \
  	sys_stat.c \
  	sys_sysconf.c \
+@@ -52,6 +54,7 @@
+ 	sys_getcwd.c \
+ 	sys_getpid.c \
+ 	sys_kill.c \
++	sys_mkdir.c \
+ 	sys_utime.c \
+ 	sys_wait.c \
+ 	semihost-sys_close.c \
 diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/sys_chdir.c newlib-4.1.0/libgloss/riscv/sys_chdir.c
 --- newlib-4.1.0-original/libgloss/riscv/sys_chdir.c	2020-12-18 18:50:49.000000000 -0500
 +++ newlib-4.1.0/libgloss/riscv/sys_chdir.c	2022-06-03 23:25:39.783614170 -0400
@@ -55,9 +67,22 @@ diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/sys_getcwd.c newlib-4.1.0/l
 +  /* ...but the user-space function returns a pointer */
 +  return rc > 0 ? buf : NULL;
  }
+diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/sys_mkdir.c newlib-4.1.0/libgloss/riscv/sys_mkdir.c
+--- newlib-4.1.0-original/libgloss/riscv/sys_mkdir.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/libgloss/riscv/sys_mkdir.c	2022-06-09 20:32:28.577714810 -0400
+@@ -0,0 +1,9 @@
++#include <machine/syscall.h>
++#include "internal_syscall.h"
++
++/* Make a new directory.  */
++int
++_mkdir(const char *path, int mode)
++{
++  return syscall_errno (SYS_mkdir, 1, (long)path, (long)mode, 0, 0, 0, 0);
++}
 diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/sys_rmdir.c newlib-4.1.0/libgloss/riscv/sys_rmdir.c
 --- newlib-4.1.0-original/libgloss/riscv/sys_rmdir.c	1969-12-31 19:00:00.000000000 -0500
-+++ newlib-4.1.0/libgloss/riscv/sys_rmdir.c	2022-06-07 21:18:03.553310204 -0400
++++ newlib-4.1.0/libgloss/riscv/sys_rmdir.c	2022-06-09 20:58:03.484213430 -0400
 @@ -0,0 +1,9 @@
 +#include <machine/syscall.h>
 +#include "internal_syscall.h"
@@ -66,7 +91,7 @@ diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/sys_rmdir.c newlib-4.1.0/li
 +int
 +_rmdir(const char *name)
 +{
-+  return syscall_errno (SYS_rmdir, 1, name, 0, 0, 0, 0, 0);
++  return syscall_errno (SYS_rmdir, 1, (long)name, 0, 0, 0, 0, 0);
 +}
 diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/include/reent.h newlib-4.1.0/newlib/libc/include/reent.h
 --- newlib-4.1.0-original/newlib/libc/include/reent.h	2020-12-18 18:50:49.000000000 -0500
@@ -527,8 +552,8 @@ diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/reent/Makefile.in newlib-4.1.0
  
 diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/syscalls/Makefile.am newlib-4.1.0/newlib/libc/syscalls/Makefile.am
 --- newlib-4.1.0-original/newlib/libc/syscalls/Makefile.am	2020-12-18 18:50:49.000000000 -0500
-+++ newlib-4.1.0/newlib/libc/syscalls/Makefile.am	2022-06-03 22:56:59.408935343 -0400
-@@ -5,9 +5,11 @@
++++ newlib-4.1.0/newlib/libc/syscalls/Makefile.am	2022-06-09 20:28:23.076684533 -0400
+@@ -5,15 +5,18 @@
  INCLUDES = $(NEWLIB_CFLAGS) $(CROSS_CFLAGS) $(TARGET_CFLAGS)
  
  GENERAL_SOURCES = \
@@ -540,10 +565,17 @@ diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/syscalls/Makefile.am newlib-4.
  	sysgetpid.c	\
  	sysgettod.c	\
  	sysisatty.c	\
+ 	syskill.c	\
+ 	syslink.c	\
+ 	syslseek.c	\
++	sysmkdir.c	\
+ 	sysopen.c	\
+ 	sysread.c	\
+ 	syssbrk.c	\
 diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/syscalls/Makefile.in newlib-4.1.0/newlib/libc/syscalls/Makefile.in
 --- newlib-4.1.0-original/newlib/libc/syscalls/Makefile.in	2020-12-18 18:50:49.000000000 -0500
-+++ newlib-4.1.0/newlib/libc/syscalls/Makefile.in	2022-06-03 22:57:29.590710598 -0400
-@@ -72,8 +72,9 @@
++++ newlib-4.1.0/newlib/libc/syscalls/Makefile.in	2022-06-09 20:29:31.899697875 -0400
+@@ -72,11 +72,13 @@
  ARFLAGS = cru
  lib_a_AR = $(AR) $(ARFLAGS)
  lib_a_LIBADD =
@@ -554,8 +586,13 @@ diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/syscalls/Makefile.in newlib-4.
 +	lib_a-sysgetcwd.$(OBJEXT) lib_a-sysgetpid.$(OBJEXT) \
  	lib_a-sysgettod.$(OBJEXT) lib_a-sysisatty.$(OBJEXT) \
  	lib_a-syskill.$(OBJEXT) lib_a-syslink.$(OBJEXT) \
- 	lib_a-syslseek.$(OBJEXT) lib_a-sysopen.$(OBJEXT) \
-@@ -88,10 +89,10 @@
+-	lib_a-syslseek.$(OBJEXT) lib_a-sysopen.$(OBJEXT) \
++	lib_a-syslseek.$(OBJEXT) lib_a-sysmkdir.$(OBJEXT) \
++	lib_a-sysopen.$(OBJEXT) \
+ 	lib_a-sysread.$(OBJEXT) lib_a-syssbrk.$(OBJEXT) \
+ 	lib_a-sysstat.$(OBJEXT) lib_a-systimes.$(OBJEXT) \
+ 	lib_a-sysunlink.$(OBJEXT) lib_a-syswrite.$(OBJEXT)
+@@ -88,10 +90,10 @@
  lib_a_OBJECTS = $(am_lib_a_OBJECTS)
  LTLIBRARIES = $(noinst_LTLIBRARIES)
  libsyscalls_la_LIBADD =
@@ -565,12 +602,12 @@ diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/syscalls/Makefile.in newlib-4.
 -	sysunlink.lo syswrite.lo
 +am__objects_3 = syschdir.lo sysclose.lo sysfcntl.lo sysfstat.lo \
 +	sysgetcwd.lo sysgetpid.lo sysgettod.lo sysisatty.lo syskill.lo \
-+	syslink.lo syslseek.lo sysopen.lo sysread.lo syssbrk.lo \
++	syslink.lo syslseek.lo sysmkdir.o sysopen.lo sysread.lo syssbrk.lo \
 +	sysstat.lo systimes.lo sysunlink.lo syswrite.lo
  @ELIX_LEVEL_1_FALSE@@ELIX_LEVEL_2_FALSE@am__objects_4 = sysexecve.lo \
  @ELIX_LEVEL_1_FALSE@@ELIX_LEVEL_2_FALSE@	sysfork.lo syswait.lo
  @USE_LIBTOOL_TRUE@am_libsyscalls_la_OBJECTS = $(am__objects_3) \
-@@ -269,9 +270,11 @@
+@@ -269,15 +271,18 @@
  AUTOMAKE_OPTIONS = cygnus
  INCLUDES = $(NEWLIB_CFLAGS) $(CROSS_CFLAGS) $(TARGET_CFLAGS)
  GENERAL_SOURCES = \
@@ -582,7 +619,14 @@ diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/syscalls/Makefile.in newlib-4.
  	sysgetpid.c	\
  	sysgettod.c	\
  	sysisatty.c	\
-@@ -388,6 +391,12 @@
+ 	syskill.c	\
+ 	syslink.c	\
+ 	syslseek.c	\
++	sysmkdir.c	\
+ 	sysopen.c	\
+ 	sysread.c	\
+ 	syssbrk.c	\
+@@ -388,6 +393,12 @@
  lib_a-sysclose.obj: sysclose.c
  	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-sysclose.obj `if test -f 'sysclose.c'; then $(CYGPATH_W) 'sysclose.c'; else $(CYGPATH_W) '$(srcdir)/sysclose.c'; fi`
  
@@ -595,7 +639,7 @@ diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/syscalls/Makefile.in newlib-4.
  lib_a-sysfcntl.o: sysfcntl.c
  	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-sysfcntl.o `test -f 'sysfcntl.c' || echo '$(srcdir)/'`sysfcntl.c
  
-@@ -400,6 +409,12 @@
+@@ -400,6 +411,12 @@
  lib_a-sysfstat.obj: sysfstat.c
  	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-sysfstat.obj `if test -f 'sysfstat.c'; then $(CYGPATH_W) 'sysfstat.c'; else $(CYGPATH_W) '$(srcdir)/sysfstat.c'; fi`
  
@@ -607,6 +651,19 @@ diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/syscalls/Makefile.in newlib-4.
 +
  lib_a-sysgetpid.o: sysgetpid.c
  	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-sysgetpid.o `test -f 'sysgetpid.c' || echo '$(srcdir)/'`sysgetpid.c
+ 
+@@ -436,6 +453,12 @@
+ lib_a-syslseek.obj: syslseek.c
+ 	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-syslseek.obj `if test -f 'syslseek.c'; then $(CYGPATH_W) 'syslseek.c'; else $(CYGPATH_W) '$(srcdir)/syslseek.c'; fi`
+ 
++lib_a-sysmkdir.o: sysmkdir.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-sysmkdir.o `test -f 'sysmkdir.c' || echo '$(srcdir)/'`sysmkdir.c
++
++lib_a-sysmkdir.obj: sysmkdir.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-sysmkdir.obj `if test -f 'sysmkdir.c'; then $(CYGPATH_W) 'sysmkdir.c'; else $(CYGPATH_W) '$(srcdir)/sysmkdir.c'; fi`
++
+ lib_a-sysopen.o: sysopen.c
+ 	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-sysopen.o `test -f 'sysopen.c' || echo '$(srcdir)/'`sysopen.c
  
 diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/syscalls/syschdir.c newlib-4.1.0/newlib/libc/syscalls/syschdir.c
 --- newlib-4.1.0-original/newlib/libc/syscalls/syschdir.c	1969-12-31 19:00:00.000000000 -0500
@@ -636,5 +693,20 @@ diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/syscalls/sysgetcwd.c newlib-4.
 +getcwd (char *path, size_t size)
 +{
 +  return _getcwd_r (_REENT, path, size);
++}
++
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/syscalls/sysmkdir.c newlib-4.1.0/newlib/libc/syscalls/sysmkdir.c
+--- newlib-4.1.0-original/newlib/libc/syscalls/sysmkdir.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/newlib/libc/syscalls/sysmkdir.c	2022-06-09 20:27:40.135801677 -0400
+@@ -0,0 +1,11 @@
++/* connector for mkdir */
++
++#include <reent.h>
++#include <sys/stat.h>
++
++int
++mkdir (const char *path, mode_t mode)
++{
++  return _mkdir_r (_REENT, path, mode);
 +}
 +
