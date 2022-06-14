@@ -22,6 +22,10 @@ main(void)
     printf("mkdir returns %d errno=%d\n", rc, errno);
     rc = mkdir("/dirtest.1/dirtest.2", 0755);
     printf("mkdir returns %d errno=%d\n", rc, errno);
+    rc = rmdir("/dirtest.1");
+    printf("rmdir returns %d errno=%d\n", rc, errno); // should fail
+    rc = rmdir("/dirtest.1/dirtest.2");
+    printf("rmdir returns %d errno=%d\n", rc, errno);
 
 #if 0
     char str[256];
