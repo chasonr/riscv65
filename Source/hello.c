@@ -17,6 +17,12 @@ main(void)
     time(&tv1);
     printf("time=%s\n", asctime(gmtime(&tv1)));
 
+    errno = 0;
+    int rc = mkdir("/dirtest.1", 0755);
+    printf("mkdir returns %d errno=%d\n", rc, errno);
+    rc = mkdir("/dirtest.1/dirtest.2", 0755);
+    printf("mkdir returns %d errno=%d\n", rc, errno);
+
 #if 0
     char str[256];
 
@@ -60,7 +66,7 @@ main(void)
     int fd = open("test.txt", O_RDONLY, 0);
     printf("len=%u open returns: %d\n", (unsigned)strlen(path), fd);
 #endif
-#if 1
+#if 0
     struct stat st;
     //memset(&st, 0, sizeof(st));
     chdir("/dir.1/dir.2");

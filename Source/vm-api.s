@@ -794,10 +794,14 @@ bad_opcode_str:
     cpx #4
     bne table_7
         asl a
-        bcs no_table
-        sta @jump+1 ; self-modifying code
-        @jump:
-        jmp (ecall_04) ; actually ecall_04,a
+        bcs @hi_bit
+            sta @jump_0+1 ; self-modifying code
+            @jump_0:
+            jmp (ecall_04) ; actually ecall_04,a
+        @hi_bit:
+            sta @jump_1+1  ; self-modifying code
+            @jump_1:
+            jmp (ecall_04+256) ; actually ecall_04+256,a
     table_7:
     cpx #7
     bne no_table
@@ -1185,7 +1189,7 @@ ecall_00:
     .word bad_ecall        ;  58
     .word bad_ecall        ;  59
     .word bad_ecall        ;  60
-    .word SYS_getdents     ;  61
+    .word SYS_getdents     ;  61 (added)
     .word SYS_lseek        ;  62 (supported)
     .word SYS_read         ;  63 (supported)
     .word SYS_write        ;  64 (supported)
@@ -1390,7 +1394,7 @@ ecall_04:
     .word bad_ecall        ; 1027
     .word bad_ecall        ; 1028
     .word bad_ecall        ; 1029
-    .word SYS_mkdir        ; 1030
+    .word SYS_mkdir        ; 1030 (added)
     .word bad_ecall        ; 1031
     .word bad_ecall        ; 1032
     .word SYS_access       ; 1033 (supported)
@@ -1512,6 +1516,135 @@ ecall_04:
     .word bad_ecall        ; 1149
     .word bad_ecall        ; 1150
     .word bad_ecall        ; 1151
+    ; Space at $480 for calls added specifically for this VM
+    .word SYS_rmdir        ; 1152 (added)
+    .word bad_ecall        ; 1153
+    .word bad_ecall        ; 1154
+    .word bad_ecall        ; 1155
+    .word bad_ecall        ; 1156
+    .word bad_ecall        ; 1157
+    .word bad_ecall        ; 1158
+    .word bad_ecall        ; 1159
+    .word bad_ecall        ; 1160
+    .word bad_ecall        ; 1161
+    .word bad_ecall        ; 1162
+    .word bad_ecall        ; 1163
+    .word bad_ecall        ; 1164
+    .word bad_ecall        ; 1165
+    .word bad_ecall        ; 1166
+    .word bad_ecall        ; 1167
+    .word bad_ecall        ; 1168
+    .word bad_ecall        ; 1169
+    .word bad_ecall        ; 1170
+    .word bad_ecall        ; 1171
+    .word bad_ecall        ; 1172
+    .word bad_ecall        ; 1173
+    .word bad_ecall        ; 1174
+    .word bad_ecall        ; 1175
+    .word bad_ecall        ; 1176
+    .word bad_ecall        ; 1177
+    .word bad_ecall        ; 1178
+    .word bad_ecall        ; 1179
+    .word bad_ecall        ; 1180
+    .word bad_ecall        ; 1181
+    .word bad_ecall        ; 1182
+    .word bad_ecall        ; 1183
+    .word bad_ecall        ; 1184
+    .word bad_ecall        ; 1185
+    .word bad_ecall        ; 1186
+    .word bad_ecall        ; 1187
+    .word bad_ecall        ; 1188
+    .word bad_ecall        ; 1189
+    .word bad_ecall        ; 1190
+    .word bad_ecall        ; 1191
+    .word bad_ecall        ; 1192
+    .word bad_ecall        ; 1193
+    .word bad_ecall        ; 1194
+    .word bad_ecall        ; 1195
+    .word bad_ecall        ; 1196
+    .word bad_ecall        ; 1197
+    .word bad_ecall        ; 1198
+    .word bad_ecall        ; 1199
+    .word bad_ecall        ; 1200
+    .word bad_ecall        ; 1201
+    .word bad_ecall        ; 1202
+    .word bad_ecall        ; 1203
+    .word bad_ecall        ; 1204
+    .word bad_ecall        ; 1205
+    .word bad_ecall        ; 1206
+    .word bad_ecall        ; 1207
+    .word bad_ecall        ; 1208
+    .word bad_ecall        ; 1209
+    .word bad_ecall        ; 1210
+    .word bad_ecall        ; 1211
+    .word bad_ecall        ; 1212
+    .word bad_ecall        ; 1213
+    .word bad_ecall        ; 1214
+    .word bad_ecall        ; 1215
+    .word bad_ecall        ; 1216
+    .word bad_ecall        ; 1217
+    .word bad_ecall        ; 1218
+    .word bad_ecall        ; 1219
+    .word bad_ecall        ; 1220
+    .word bad_ecall        ; 1221
+    .word bad_ecall        ; 1222
+    .word bad_ecall        ; 1223
+    .word bad_ecall        ; 1224
+    .word bad_ecall        ; 1225
+    .word bad_ecall        ; 1226
+    .word bad_ecall        ; 1227
+    .word bad_ecall        ; 1228
+    .word bad_ecall        ; 1229
+    .word bad_ecall        ; 1230
+    .word bad_ecall        ; 1231
+    .word bad_ecall        ; 1232
+    .word bad_ecall        ; 1233
+    .word bad_ecall        ; 1234
+    .word bad_ecall        ; 1235
+    .word bad_ecall        ; 1236
+    .word bad_ecall        ; 1237
+    .word bad_ecall        ; 1238
+    .word bad_ecall        ; 1239
+    .word bad_ecall        ; 1240
+    .word bad_ecall        ; 1241
+    .word bad_ecall        ; 1242
+    .word bad_ecall        ; 1243
+    .word bad_ecall        ; 1244
+    .word bad_ecall        ; 1245
+    .word bad_ecall        ; 1246
+    .word bad_ecall        ; 1247
+    .word bad_ecall        ; 1248
+    .word bad_ecall        ; 1249
+    .word bad_ecall        ; 1250
+    .word bad_ecall        ; 1251
+    .word bad_ecall        ; 1252
+    .word bad_ecall        ; 1253
+    .word bad_ecall        ; 1254
+    .word bad_ecall        ; 1255
+    .word bad_ecall        ; 1256
+    .word bad_ecall        ; 1257
+    .word bad_ecall        ; 1258
+    .word bad_ecall        ; 1259
+    .word bad_ecall        ; 1260
+    .word bad_ecall        ; 1261
+    .word bad_ecall        ; 1262
+    .word bad_ecall        ; 1263
+    .word bad_ecall        ; 1264
+    .word bad_ecall        ; 1265
+    .word bad_ecall        ; 1266
+    .word bad_ecall        ; 1267
+    .word bad_ecall        ; 1268
+    .word bad_ecall        ; 1269
+    .word bad_ecall        ; 1270
+    .word bad_ecall        ; 1271
+    .word bad_ecall        ; 1272
+    .word bad_ecall        ; 1273
+    .word bad_ecall        ; 1274
+    .word bad_ecall        ; 1275
+    .word bad_ecall        ; 1276
+    .word bad_ecall        ; 1277
+    .word bad_ecall        ; 1278
+    .word bad_ecall        ; 1279
 
 ; System calls supported by Newlib
 
@@ -1535,6 +1668,10 @@ SYS_exit = _RISCV_exit
 
 .import SYS_getcwd
 .import SYS_chdir
+SYS_getdents = bad_ecall
+.import SYS_mkdir
+.import SYS_rmdir
+SYS_remove   = bad_ecall
 
 ; System calls called by Newlib but not supported here
 SYS_faccessat = bad_ecall
@@ -1544,7 +1681,6 @@ SYS_fstatat   = bad_ecall
 
 SYS_dup          = bad_ecall
 SYS_fcntl        = bad_ecall
-SYS_getdents     = bad_ecall
 SYS_writev       = bad_ecall
 SYS_pread        = bad_ecall
 SYS_pwrite       = bad_ecall
@@ -1561,6 +1697,5 @@ SYS_getegid      = bad_ecall
 SYS_munmap       = bad_ecall
 SYS_mremap       = bad_ecall
 SYS_mmap         = bad_ecall
-SYS_mkdir        = bad_ecall
 SYS_time         = bad_ecall
 SYS_getmainvars  = bad_ecall

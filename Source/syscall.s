@@ -3135,6 +3135,272 @@ open_mode: .res 1
 
 .code
 
+; Create a new directory
+; Path is in A0
+; Mode is in A1 (this is unused)
+.global SYS_mkdir
+.proc SYS_mkdir
+
+    ; Set the starting directory to the current directory
+    jsr start_with_current_dir
+
+    ; Set the address of the file path
+    lda _RISCV_ireg_0+REG_a0
+    sta io_addr+0
+    lda _RISCV_ireg_1+REG_a0
+    sta io_addr+1
+    lda _RISCV_ireg_2+REG_a0
+    sta io_addr+2
+    lda _RISCV_ireg_3+REG_a0
+    sta io_addr+3
+
+    jmp mkdir_common
+
+.endproc
+
+; Common to mkdir and (yet unimplemented) mkdirat
+.proc mkdir_common
+
+    ; Look for a file with a given path
+    jsr find_file
+
+    ; The desired outcome is that find_file should *fail* with ENOENT,
+    ; and is_last_component should return true; that is, the path does
+    ; not name an existing file, but all components up to the last were
+    ; found.
+    bcs @check_noent
+        ; The file already exists
+        set_errno EEXIST
+        rts
+    @check_noent:
+    ; Return any error other than ENOENT
+    cmp #$100-ENOENT
+    beq @check_last
+        ; Return the error
+        set_errno
+        rts
+    @check_last:
+    jsr is_last_component
+    bcc @file_ok
+        ; Some prior component was not found
+        set_errno ENOENT
+        rts
+    @file_ok:
+
+    ; Set local_addr for routines that need it
+    lda #<file_data
+    sta local_addr+0
+    lda #>file_data
+    sta local_addr+1
+
+    ; Make sure we have a directory entry
+    jsr make_dir_entry
+    bcc have_dir_entry
+        set_errno
+        rts
+    have_dir_entry:
+
+    ; Create the new entry in newdir, the . entry in dot and the .. entry in dotdot
+    ; We'll need a cluster, to be filled in later
+    ; Zero out the newdir entry
+    ldx #31
+    lda #0
+    @zero:
+        sta newdir,x
+    dex
+    bpl @zero
+    ; Set the names
+    ldx #10
+    @name:
+        lda path_part,x
+        sta newdir+filedata::name,x
+    dex
+    bpl @name
+    ldx #10
+    lda #' '
+    @space:
+        sta dot,x
+        sta dotdot,x
+    dex
+    bne @space ; not bpl
+    lda #'.'
+    sta dot+0
+    sta dotdot+0
+    sta dotdot+1
+    ; Attributes
+    lda #ATTR_DIRECTORY
+    sta newdir+filedata::attributes
+    ; Set the creation and modification time
+    jsr set_mtime
+    sta newdir+filedata::ctime_lo ; odd second
+    lda file_data+filedata::mtime+0
+    sta newdir+filedata::mtime+0
+    sta newdir+filedata::ctime+0
+    lda file_data+filedata::mtime+1
+    sta newdir+filedata::mtime+1
+    sta newdir+filedata::ctime+1
+    lda file_data+filedata::mdate+0
+    sta newdir+filedata::mdate+0
+    sta newdir+filedata::cdate+0
+    lda file_data+filedata::mdate+1
+    sta newdir+filedata::mdate+1
+    sta newdir+filedata::cdate+1
+    ; Copy attributes and times to dot and dotdot
+    ldx #32-filedata::attributes-1
+    @copy:
+        lda newdir+filedata::attributes,x
+        sta dot   +filedata::attributes,x
+        sta dotdot+filedata::attributes,x
+    dex
+    bpl @copy
+    ; Set cluster number for ..
+    lda file_data+filedata::cluster_lo+0
+    sta dotdot   +filedata::cluster_lo+0
+    lda file_data+filedata::cluster_lo+1
+    sta dotdot   +filedata::cluster_lo+1
+    lda file_data+filedata::cluster_hi+0
+    sta dotdot   +filedata::cluster_hi+0
+    lda file_data+filedata::cluster_hi+1
+    sta dotdot   +filedata::cluster_hi+1
+    ; Allocate initial cluster for the new entry
+    ldx #31
+    @copy_2:
+        lda newdir,x
+        sta file_data,x
+    dex
+    bpl @copy_2
+    lda #0
+    sta cluster+0
+    sta cluster+1
+    sta cluster+2
+    sta cluster+3
+    jsr allocate_cluster
+    bcc :+
+        rts
+    :
+
+    ; Set the cluster number for .
+    lda file_data+filedata::cluster_lo+0
+    sta dot      +filedata::cluster_lo+0
+    lda file_data+filedata::cluster_lo+1
+    sta dot      +filedata::cluster_lo+1
+    lda file_data+filedata::cluster_hi+0
+    sta dot      +filedata::cluster_hi+0
+    lda file_data+filedata::cluster_hi+1
+    sta dot      +filedata::cluster_hi+1
+
+    ; new_dir_entry points to the location of an unused directory entry
+    ; Write the new directory entry
+    lda new_dir_entry+0
+    sta file_data+filedata::dir_entry+0
+    lda new_dir_entry+1
+    sta file_data+filedata::dir_entry+1
+    lda new_dir_entry+2
+    sta file_data+filedata::dir_entry+2
+    lda new_dir_entry+3
+    sta file_data+filedata::dir_entry+3
+    jsr write_dir_entry
+    bcc :+
+        rts
+    :
+
+    ; Seek to the cluster location
+    lda #0
+    sta seek_location+0
+    lda file_data+filedata::cluster_lo+0
+    sta seek_location+1
+    lda file_data+filedata::cluster_lo+1
+    sta seek_location+2
+    lda file_data+filedata::cluster_hi+0
+    ldx fs_cluster_shift
+    beq @end_lshift
+    @lshift:
+        asl seek_location+0
+        rol seek_location+1
+        rol a
+    dex
+    bne @lshift
+    @end_lshift:
+    sta seek_location+3
+    clc
+    lda seek_location+1
+    adc fs_cluster_base+0
+    sta seek_location+1
+    lda seek_location+2
+    adc fs_cluster_base+1
+    sta seek_location+2
+    lda seek_location+3
+    adc fs_cluster_base+2
+    sta seek_location+3
+    jsr do_seek
+    bcc :+
+        lda #$100-EIO
+        rts
+    :
+
+    ; Write the . and .. entries
+    jsr begin_write
+    ; Write the . entry
+    ldx #0
+    @write_dot:
+        lda dot,x
+        sta CMD_DATA
+    inx
+    cpx #32
+    bcc @write_dot
+    ; Write the .. entry
+    ldx #0
+    @write_dotdot:
+        lda dotdot,x
+        sta CMD_DATA
+    inx
+    cpx #32
+    bcc @write_dotdot
+    ; Write an all-zeros entry
+    ldx #32
+    lda #0
+    @write_zeros:
+        sta CMD_DATA
+    dex
+    bne @write_zeros
+    jsr end_write
+    bcc :+
+        lda #$100-EIO
+    :
+    ; End here
+    lda #0
+    sta _RISCV_ireg_0+REG_a0
+    sta _RISCV_ireg_1+REG_a0
+    sta _RISCV_ireg_2+REG_a0
+    sta _RISCV_ireg_3+REG_a0
+    rts
+
+.bss
+newdir: .res 32
+dot:    .res 32
+dotdot: .res 32
+.code
+
+.endproc
+;000328a0: 4449 5220 2020 2020 3120 2010 0064 1c18  DIR     1  ..d..
+;000328b0: 8553 8553 0000 1c18 8553 ae01 0000 0000  .S.S.....S......
+;0010c800: 2e20 2020 2020 2020 2020 2010 0032 1b18  .          ..2..
+;0010c810: 8553 8553 0000 1b18 8553 ae01 0000 0000  .S.S.....S......
+;0010c820: 2e2e 2020 2020 2020 2020 2010 0032 1b18  ..         ..2..
+;0010c830: 8553 8553 0000 1b18 8553 0000 0000 0000  .S.S.....S......
+;   name       .byte 11 "DIR     1  " | ".          " | "..         "
+;   attributes .byte  1 10            | 10            | 10
+;   case_flags .byte  1 00            | 00            | 00
+;   ctime_lo   .byte  1 64            | 32            | 32
+;   ctime      .word  1 1c18          | 1b18          | 1b18
+;   cdate      .word  1 8553          | 8553          | 8553
+;   reserved   .word  1 8553          | 8553          | 8553
+;   cluster_hi .word  1 0000          | 0000          | 0000
+;   mtime      .word  1 1c18          | 1b18          | 1b18
+;   mdate      .word  1 8553          | 8553          | 8553
+;   cluster_lo .word  1 ae01          | ae01          | 0000
+;   size       .dword 1 0000 0000     | 0000 0000     | 0000 0000
+
 ; Set the current directory into open_dir
 .proc start_with_current_dir
 
@@ -3526,123 +3792,11 @@ create_file:
     lda #>file_data
     sta local_addr+1
 
-    ; Do we have a free directory entry available?
-    lda new_dir_entry+0
-    ora new_dir_entry+1
-    ora new_dir_entry+2
-    ora new_dir_entry+3
-    jne have_dir_entry
-
-        ; No free entry was found.
-        ; If the directory is the FAT12/FAT16 root, we can't extend it.
-        lda dir_start+0
-        ora dir_start+1
-        ora dir_start+2
-        bne extend_dir
-            set_errno ENOSPC
-            rts
-        extend_dir:
-
-        ; last_cluster marks the cluster number that ends the directory, or 0
-        ; if the directory is empty.
-        ; Pass this to allocate_cluster so it can update the FAT to point to a
-        ; new cluster.
-        lda last_cluster+0
-        sta cluster+0
-        lda last_cluster+1
-        sta cluster+1
-        lda last_cluster+2
-        sta cluster+2
-        lda #0
-        sta cluster+3
-
-        ; Allocate a new cluster if possible
-        jsr allocate_cluster
-        bcc :+
-            sta _RISCV_ireg_0+REG_a0
-            lda #$FF
-            sta _RISCV_ireg_1+REG_a0
-            sta _RISCV_ireg_2+REG_a0
-            sta _RISCV_ireg_3+REG_a0
-            rts
-        :
-
-        ; Convert cluster number to byte position
-        lda #0
-        sta new_dir_entry+0
-        lda cluster+0
-        sta new_dir_entry+1
-        lda cluster+1
-        sta new_dir_entry+2
-        lda cluster+2
-        ldx fs_cluster_shift
-        beq @end_shift
-        @shift:
-            asl new_dir_entry+1
-            rol new_dir_entry+2
-            rol a
-        dex
-        bpl @shift
-        @end_shift:
-        sta new_dir_entry+3
-        clc
-        lda fs_cluster_base+0
-        adc new_dir_entry+1
-        sta new_dir_entry+1
-        lda fs_cluster_base+1
-        adc new_dir_entry+2
-        sta new_dir_entry+2
-        lda fs_cluster_base+2
-        adc new_dir_entry+3
-        sta new_dir_entry+3
-
-        ; Seek to the new cluster
-        lda new_dir_entry+0
-        sta seek_location+0
-        lda new_dir_entry+1
-        sta seek_location+1
-        lda new_dir_entry+2
-        sta seek_location+2
-        lda new_dir_entry+3
-        sta seek_location+3
-        jsr do_seek
-        bcc :+
-            set_errno EIO
-            rts
-        :
-
-        ; Fill the cluster with zeros:
-        ; Set cluster size in 256-byte blocks
-        ; Make negative to simplify the loop
-        sec
-        lda #0
-        sbc fs_cluster_size+0
-        sta dir_size+0
-        lda #0
-        sbc fs_cluster_size+1
-        sta dir_size+1
-        @fill_cluster:
-
-            jsr begin_write
-            lda #0
-            tax                 ; write 256 zeros
-            @fill_bytes:
-                sta CMD_DATA
-            dex
-            bne @fill_bytes
-            jsr end_write
-            bcc :+
-                set_errno EIO
-                rts
-            :
-
-        inc dir_size+0
-        bne @fill_cluster
-        inc dir_size+1
-        bne @fill_cluster
-
-        ; new_dir_entry points to the newly allocated cluster.
-
+    ; Make a free directory entry if we didn't find one
+    jsr make_dir_entry
+    bcc have_dir_entry
+        set_errno
+        rts
     have_dir_entry:
 
     ; Fill in the file_data structure:
@@ -3731,6 +3885,132 @@ create_file:
 
 .endproc
 
+; Make a new directory entry if the last search didn't find a free one
+; On error, return C set and -errno in A
+; On success, return C clear and new_dir_entry points to a free directory entry
+.proc make_dir_entry
+
+    ; Do we have a free directory entry available?
+    lda new_dir_entry+0
+    ora new_dir_entry+1
+    ora new_dir_entry+2
+    ora new_dir_entry+3
+    beq need_dir_entry
+        clc
+        rts
+    need_dir_entry:
+
+    ; No free entry was found.
+    ; If the directory is the FAT12/FAT16 root, we can't extend it.
+    lda dir_start+0
+    ora dir_start+1
+    ora dir_start+2
+    bne extend_dir
+        lda #$100-ENOSPC
+        sec
+        rts
+    extend_dir:
+
+    ; last_cluster marks the cluster number that ends the directory, or 0
+    ; if the directory is empty.
+    ; Pass this to allocate_cluster so it can update the FAT to point to a
+    ; new cluster.
+    lda last_cluster+0
+    sta cluster+0
+    lda last_cluster+1
+    sta cluster+1
+    lda last_cluster+2
+    sta cluster+2
+    lda #0
+    sta cluster+3
+
+    ; Allocate a new cluster if possible
+    jsr allocate_cluster
+    bcc :+
+        rts
+    :
+
+    ; Convert cluster number to byte position
+    lda #0
+    sta new_dir_entry+0
+    lda cluster+0
+    sta new_dir_entry+1
+    lda cluster+1
+    sta new_dir_entry+2
+    lda cluster+2
+    ldx fs_cluster_shift
+    beq @end_shift
+    @shift:
+        asl new_dir_entry+1
+        rol new_dir_entry+2
+        rol a
+    dex
+    bpl @shift
+    @end_shift:
+    sta new_dir_entry+3
+    clc
+    lda fs_cluster_base+0
+    adc new_dir_entry+1
+    sta new_dir_entry+1
+    lda fs_cluster_base+1
+    adc new_dir_entry+2
+    sta new_dir_entry+2
+    lda fs_cluster_base+2
+    adc new_dir_entry+3
+    sta new_dir_entry+3
+
+    ; Seek to the new cluster
+    lda new_dir_entry+0
+    sta seek_location+0
+    lda new_dir_entry+1
+    sta seek_location+1
+    lda new_dir_entry+2
+    sta seek_location+2
+    lda new_dir_entry+3
+    sta seek_location+3
+    jsr do_seek
+    bcc :+
+        lda #$100-EIO
+        rts
+    :
+
+    ; Fill the cluster with zeros:
+    ; Set cluster size in 256-byte blocks
+    ; Make negative to simplify the loop
+    sec
+    lda #0
+    sbc fs_cluster_size+0
+    sta dir_size+0
+    lda #0
+    sbc fs_cluster_size+1
+    sta dir_size+1
+    @fill_cluster:
+
+        jsr begin_write
+        lda #0
+        tax                 ; write 256 zeros
+        @fill_bytes:
+            sta CMD_DATA
+        dex
+        bne @fill_bytes
+        jsr end_write
+        bcc :+
+            lda #$100-EIO
+            rts
+        :
+
+    inc dir_size+0
+    bne @fill_cluster
+    inc dir_size+1
+    bne @fill_cluster
+
+    ; new_dir_entry points to the newly allocated cluster.
+
+    clc
+    rts
+
+.endproc
+
 ; Delete a file
 ; Path is in A0
 
@@ -3811,6 +4091,277 @@ create_file:
     sta _RISCV_ireg_1+REG_a0
     sta _RISCV_ireg_2+REG_a0
     sta _RISCV_ireg_3+REG_a0
+    rts
+
+.endproc
+
+; Delete a directory
+; Path is in A0
+
+.global SYS_rmdir
+.proc SYS_rmdir
+
+    ; Set the starting directory to the current directory
+    jsr start_with_current_dir
+
+    ; Set the address of the file path
+    lda _RISCV_ireg_0+REG_a0
+    sta io_addr+0
+    lda _RISCV_ireg_1+REG_a0
+    sta io_addr+1
+    lda _RISCV_ireg_2+REG_a0
+    sta io_addr+2
+    lda _RISCV_ireg_3+REG_a0
+    sta io_addr+3
+
+    ; We don't have rmdirat yet, but this will make it easier
+    jmp rmdir_common
+
+.endproc
+
+; Delete a directory
+; Starting directory is set
+; Path is in io_addr
+
+.proc rmdir_common
+
+    ; Find the file
+    jsr find_file
+    bcc :+
+        set_errno
+        rts
+    :
+
+    ; Is the directory already open?
+    jsr is_open
+    bcc :+
+        set_errno EBUSY
+        rts
+    :
+
+    ; Is the file a directory?
+    lda file_data+filedata::attributes
+    and #ATTR_DIRECTORY
+    bne :+
+        set_errno ENOTDIR
+        rts
+    :
+
+    ; Can we delete this directory?
+    jsr check_rmdir
+    bcc :+
+        set_errno
+        rts
+    :
+
+    ; Remove the cluster chain
+    lda file_data+filedata::cluster_lo+0
+    sta cluster+0
+    lda file_data+filedata::cluster_lo+1
+    sta cluster+1
+    lda file_data+filedata::cluster_hi+0
+    sta cluster+2
+    lda file_data+filedata::cluster_hi+1
+    sta cluster+3
+    jsr delete_cluster_chain
+    bcc :+
+        set_errno
+        rts
+    :
+
+    ; Remove the directory entry
+    jsr delete_dir_entry
+    bcc :+
+        set_errno
+        rts
+    :
+
+    ; Return success
+    lda #0
+    sta _RISCV_ireg_0+REG_a0
+    sta _RISCV_ireg_1+REG_a0
+    sta _RISCV_ireg_2+REG_a0
+    sta _RISCV_ireg_3+REG_a0
+    rts
+
+.endproc
+
+; Check for disallowed deletion of a directory
+; Return C set and -errno in A if not allowed
+
+.proc check_rmdir
+
+    ; Is the file the root directory?
+    lda file_data+filedata::dir_entry+0
+    cmp fs_root_dir+0
+    bne :+
+    lda file_data+filedata::dir_entry+1
+    cmp fs_root_dir+1
+    bne :+
+    lda file_data+filedata::dir_entry+2
+    cmp fs_root_dir+2
+    bne :+
+    lda file_data+filedata::dir_entry+3
+    cmp fs_root_dir+3
+    bne :+
+        ; Can't delete the root directory
+        lda #$100-EACCES
+        rts
+    :
+
+    ; Set cluster_pos
+    lda file_data+filedata::cluster_lo+0
+    sta file_data+filedata::cluster_pos+0
+    lda file_data+filedata::cluster_lo+1
+    sta file_data+filedata::cluster_pos+1
+    lda file_data+filedata::cluster_hi+0
+    sta file_data+filedata::cluster_pos+2
+    ; Check for presence of cluster chain
+    ora file_data+filedata::cluster_pos+0
+    ora file_data+filedata::cluster_pos+1
+    bne :+
+        ; No cluster chain; directory is empty
+        clc
+        rts
+    :
+    ; Set cluster_ptr
+    lda #0
+    sta file_data+filedata::cluster_ptr+0
+    sta file_data+filedata::cluster_ptr+1
+    sta file_data+filedata::cluster_ptr+2
+
+    cluster_loop:
+        ; Set seek_location:
+        ; Start with shifted cluster position
+        lda file_data+filedata::cluster_pos+0
+        sta seek_location+1
+        lda file_data+filedata::cluster_pos+1
+        sta seek_location+2
+        lda file_data+filedata::cluster_pos+2
+        ldx fs_cluster_shift
+        beq @end_lshift
+        @lshift:
+            asl seek_location+1
+            rol seek_location+2
+            rol a
+        dex
+        bne @lshift
+        @end_lshift:
+        sta seek_location+3
+        ; Add fs_cluster_base
+        clc
+        lda seek_location+1
+        adc fs_cluster_base+0
+        sta seek_location+1
+        lda seek_location+2
+        adc fs_cluster_base+1
+        sta seek_location+2
+        lda seek_location+3
+        adc fs_cluster_base+2
+        sta seek_location+3
+
+        ; Set cluster_ptr
+        lda #0
+        sta seek_location+0
+        sta file_data+filedata::cluster_ptr+0
+        sta file_data+filedata::cluster_ptr+1
+        sta file_data+filedata::cluster_ptr+2
+
+        ; Seek to seek_location
+        jsr do_seek
+        bcc :+
+        io_error:
+            lda #$100-EIO
+            rts
+        :
+
+        dir_loop:
+
+            ; Read the directory entry
+            lda #32
+            jsr read_bytes
+            bcs io_error
+
+            ; 0 at start marks end of directory; exit early
+            lda io_xfer+0
+            bne :+
+                clc
+                rts
+            :
+
+            ; $E5 indicates a deleted entry
+            cmp #$E5
+            beq end_dir_loop
+
+            ; Disregard a volume label
+            lda io_xfer+filedata::attributes
+            and #ATTR_VOLUME
+            bne end_dir_loop
+
+            ; Disregard the . and .. entries
+            cmp #'.'
+            bne not_empty   ; first byte == '.'
+            lda io_xfer+1   ; second byte == ' ' or '.'
+            cmp #' '
+            beq :+
+            cmp #'.'
+            bne not_empty
+            :
+            ldx #8          ; bytes 2-10 == ' '
+            @check_spaces:
+                lda io_xfer+2,x
+                cmp #' '
+                bne not_empty
+            dex
+            bpl @check_spaces
+            bmi end_dir_loop ; A . or .. entry
+
+            not_empty:
+                lda #$100-ENOTEMPTY
+                sec
+                rts
+
+        end_dir_loop:
+        ; Advance cluster_ptr
+        clc
+        lda file_data+filedata::cluster_ptr+0
+        adc #32
+        sta file_data+filedata::cluster_ptr+0
+        lda file_data+filedata::cluster_ptr+1
+        adc #0
+        sta file_data+filedata::cluster_ptr+1
+        lda file_data+filedata::cluster_ptr+2
+        adc #0
+        sta file_data+filedata::cluster_ptr+2
+        ; Check for end of cluster
+        lda file_data+filedata::cluster_ptr+1
+        cmp fs_cluster_size+0
+        lda file_data+filedata::cluster_ptr+2
+        cmp fs_cluster_size+1
+        bcc dir_loop
+
+    ; Advance to next cluster
+    lda file_data+filedata::cluster_pos+0
+    sta cluster+0
+    lda file_data+filedata::cluster_pos+1
+    sta cluster+1
+    lda file_data+filedata::cluster_pos+2
+    sta cluster+2
+    lda #0
+    sta cluster+3
+    jsr next_cluster
+    bcc :+
+        ; ENOENT indicates end of chain.
+        ; If we get ENOENT, the directory is empty.
+        cmp #$100-ENOENT
+        beq end_directory
+        sec
+        rts
+    :
+    jmp cluster_loop
+
+    end_directory:
+    clc
     rts
 
 .endproc
@@ -4185,13 +4736,13 @@ create_file:
         @io_error:
             lda #$100-EIO
             rts
+        ldx #31
+        @copy:
+            lda io_xfer,x
+            sta file_data,x
+        dex
+        bpl @copy
     @got_dir:
-    ldx #31
-    @copy:
-        lda io_xfer,x
-        sta file_data,x
-    dex
-    bpl @copy
 
     @path_loop:
         lda file_data+filedata::cluster_lo+0
@@ -5713,6 +6264,13 @@ bad_name:
 
 ; Set the root directory for seek in find_entry
 .proc set_root_directory
+
+    ldx #31
+    lda #0
+    @zero:
+        sta file_data,x
+    dex
+    bpl @zero
 
     ; Set ATTR_DIRECTORY so find_entry doesn't return ENOTDIR
     lda #ATTR_DIRECTORY
