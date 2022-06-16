@@ -11,8 +11,16 @@ diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/machine/syscall.h newlib-4.
  /* Semihosting operations.  */
 diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/Makefile.in newlib-4.1.0/libgloss/riscv/Makefile.in
 --- newlib-4.1.0-original/libgloss/riscv/Makefile.in	2020-12-18 18:50:49.000000000 -0500
-+++ newlib-4.1.0/libgloss/riscv/Makefile.in	2022-06-09 20:30:33.376781317 -0400
-@@ -28,9 +28,11 @@
++++ newlib-4.1.0/libgloss/riscv/Makefile.in	2022-06-15 19:54:09.713416741 -0400
+@@ -21,6 +21,7 @@
+ 	sys_fstat.c \
+ 	sys_ftime.c \
+ 	sys_getcwd.c \
++	sys_getdents.c \
+ 	sys_getpid.c \
+ 	sys_gettimeofday.c \
+ 	sys_isatty.c \
+@@ -28,9 +29,11 @@
  	sys_link.c \
  	sys_lseek.c \
  	sys_lstat.c \
@@ -24,7 +32,7 @@ diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/Makefile.in newlib-4.1.0/li
  	sys_sbrk.c \
  	sys_stat.c \
  	sys_sysconf.c \
-@@ -52,6 +54,7 @@
+@@ -52,6 +55,7 @@
  	sys_getcwd.c \
  	sys_getpid.c \
  	sys_kill.c \
@@ -67,6 +75,20 @@ diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/sys_getcwd.c newlib-4.1.0/l
 +  /* ...but the user-space function returns a pointer */
 +  return rc > 0 ? buf : NULL;
  }
+diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/sys_getdents.c newlib-4.1.0/libgloss/riscv/sys_getdents.c
+--- newlib-4.1.0-original/libgloss/riscv/sys_getdents.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/libgloss/riscv/sys_getdents.c	2022-06-15 20:24:32.443893419 -0400
+@@ -0,0 +1,10 @@
++#include <machine/syscall.h>
++#include "internal_syscall.h"
++#include <dirent.h>
++
++/* Read a directory entry */
++int
++_getdents(int fd, struct dirent *entry)
++{
++  return __internal_syscall (SYS_getdents, 1, (long)fd, (long)entry, 0, 0, 0, 0);
++}
 diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/sys_mkdir.c newlib-4.1.0/libgloss/riscv/sys_mkdir.c
 --- newlib-4.1.0-original/libgloss/riscv/sys_mkdir.c	1969-12-31 19:00:00.000000000 -0500
 +++ newlib-4.1.0/libgloss/riscv/sys_mkdir.c	2022-06-09 20:32:28.577714810 -0400
@@ -206,45 +228,133 @@ diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/accessr.c newlib
 +
 +
 +#endif /* ! defined (REENTRANT_SYSCALLS_PROVIDED) */
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/alphasort.c newlib-4.1.0/newlib/libc/machine/riscv/alphasort.c
+--- newlib-4.1.0-original/newlib/libc/machine/riscv/alphasort.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/newlib/libc/machine/riscv/alphasort.c	2022-06-15 19:26:59.191770418 -0400
+@@ -0,0 +1,9 @@
++/* alphasort.c for riscv65 */
++
++#include <string.h>
++#include <dirent.h>
++
++int alphasort(const struct dirent **d1, const struct dirent **d2)
++{
++    return strcoll((*d1)->d_name, (*d2)->d_name);
++}
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/closedir.c newlib-4.1.0/newlib/libc/machine/riscv/closedir.c
+--- newlib-4.1.0-original/newlib/libc/machine/riscv/closedir.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/newlib/libc/machine/riscv/closedir.c	2022-06-15 00:15:28.637796478 -0400
+@@ -0,0 +1,12 @@
++/* closedir.c for riscv65 */
++
++#include <stdlib.h>
++#include <dirent.h>
++#include <unistd.h>
++
++int closedir(DIR *dirp)
++{
++    int rc = close(dirp->dd_fd);
++    free(dirp);
++    return rc;
++}
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/dirfd.c newlib-4.1.0/newlib/libc/machine/riscv/dirfd.c
+--- newlib-4.1.0-original/newlib/libc/machine/riscv/dirfd.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/newlib/libc/machine/riscv/dirfd.c	2022-06-14 23:57:10.534066784 -0400
+@@ -0,0 +1,9 @@
++/* dirfd.c for riscv65 */
++
++#include <stdlib.h>
++#include <dirent.h>
++
++int dirfd(DIR *dirp)
++{
++    return dirp->dd_fd;
++}
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/fdopendir.c newlib-4.1.0/newlib/libc/machine/riscv/fdopendir.c
+--- newlib-4.1.0-original/newlib/libc/machine/riscv/fdopendir.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/newlib/libc/machine/riscv/fdopendir.c	2022-06-14 23:56:55.043063469 -0400
+@@ -0,0 +1,28 @@
++/* fdopendir.c for riscv65 */
++
++#include <errno.h>
++#include <stdlib.h>
++#include <dirent.h>
++#include <sys/stat.h>
++
++DIR *fdopendir(int fd)
++{
++    /* Make sure fd indicates a directory */
++    struct stat st;
++    int rc = fstat(fd, &st);
++    if (rc < 0) {
++        /* fd is not valid */
++        return NULL;
++    }
++    if (!S_ISDIR(st.st_mode)) {
++        errno = ENOTDIR;
++        return NULL;
++    }
++
++    /* Wrap fd in a DIR structure */
++    DIR *dirp = calloc(1, sizeof(DIR));
++    if (dirp != NULL) {
++        dirp->dd_fd = fd;
++    }
++    return dirp;
++}
 diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/Makefile.am newlib-4.1.0/newlib/libc/machine/riscv/Makefile.am
 --- newlib-4.1.0-original/newlib/libc/machine/riscv/Makefile.am	2020-12-18 18:50:49.000000000 -0500
-+++ newlib-4.1.0/newlib/libc/machine/riscv/Makefile.am	2022-06-07 21:36:16.315667300 -0400
-@@ -9,7 +9,7 @@
- noinst_LIBRARIES = lib.a
++++ newlib-4.1.0/newlib/libc/machine/riscv/Makefile.am	2022-06-15 19:20:08.955767867 -0400
+@@ -10,6 +10,11 @@
  
  lib_a_SOURCES = memmove.S memmove-stub.c memset.S memcpy-asm.S memcpy.c strlen.c \
--	strcpy.c strcmp.S setjmp.S ieeefp.c ffs.c
-+	strcpy.c strcmp.S setjmp.S ieeefp.c ffs.c access.c accessr.c rmdir.c rmdirr.c
+ 	strcpy.c strcmp.S setjmp.S ieeefp.c ffs.c
++# riscv65
++lib_a_SOURCES += access.c accessr.c alphasort.c closedir.c dirfd.c fdopendir.c \
++	opendir.c readdir.c readdir_r.c rewinddir.c rmdir.c rmdirr.c scandir.c \
++	seekdir.c telldir.c
++# end riscv65
  lib_a_CCASFLAGS=$(AM_CCASFLAGS)
  lib_a_CFLAGS=$(AM_CFLAGS)
  
 diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/Makefile.in newlib-4.1.0/newlib/libc/machine/riscv/Makefile.in
 --- newlib-4.1.0-original/newlib/libc/machine/riscv/Makefile.in	2020-12-18 18:50:49.000000000 -0500
-+++ newlib-4.1.0/newlib/libc/machine/riscv/Makefile.in	2022-06-07 21:41:31.153818729 -0400
-@@ -74,7 +74,9 @@
- 	lib_a-memcpy-asm.$(OBJEXT) lib_a-memcpy.$(OBJEXT) \
++++ newlib-4.1.0/newlib/libc/machine/riscv/Makefile.in	2022-06-15 19:22:54.578060964 -0400
+@@ -75,6 +75,17 @@
  	lib_a-strlen.$(OBJEXT) lib_a-strcpy.$(OBJEXT) \
  	lib_a-strcmp.$(OBJEXT) lib_a-setjmp.$(OBJEXT) \
--	lib_a-ieeefp.$(OBJEXT) lib_a-ffs.$(OBJEXT)
-+	lib_a-ieeefp.$(OBJEXT) lib_a-ffs.$(OBJEXT) \
+ 	lib_a-ieeefp.$(OBJEXT) lib_a-ffs.$(OBJEXT)
++# riscv65
++am_lib_a_OBJECTS += \
 +	lib_a-access.$(OBJEXT) lib_a-accessr.$(OBJEXT) \
-+	lib_a-rmdir.$(OBJEXT) lib_a-rmdirr.$(OBJEXT)
++	lib_a-alphasort.$(OBJEXT) lib_a-closedir.$(OBJEXT) \
++	lib_a-dirfd.$(OBJEXT) lib_a-fdopendir.$(OBJEXT) \
++	lib_a-opendir.$(OBJEXT) lib_a-readdir.$(OBJEXT) \
++	lib_a-readdir_r.$(OBJEXT) lib_a-rewinddir.$(OBJEXT) \
++	lib_a-scandir.$(OBJEXT) lib_a-seekdir.$(OBJEXT) \
++	lib_a-telldir.$(OBJEXT) lib_a-rmdir.$(OBJEXT) \
++	lib_a-rmdirr.$(OBJEXT)
++# end riscv65
  lib_a_OBJECTS = $(am_lib_a_OBJECTS)
  DEFAULT_INCLUDES = -I.@am__isrc@
  depcomp =
-@@ -201,7 +203,7 @@
- AM_CCASFLAGS = $(INCLUDES)
+@@ -202,6 +213,11 @@
  noinst_LIBRARIES = lib.a
  lib_a_SOURCES = memmove.S memmove-stub.c memset.S memcpy-asm.S memcpy.c strlen.c \
--	strcpy.c strcmp.S setjmp.S ieeefp.c ffs.c
-+	strcpy.c strcmp.S setjmp.S ieeefp.c ffs.c access.c accessr.c rmdir.c rmdirr.c
+ 	strcpy.c strcmp.S setjmp.S ieeefp.c ffs.c
++# riscv65
++lib_a_SOURCES += access.c accessr.c alphasort.c closedir.c dirfd.c fdopendir.c \
++	opendir.c readdir.c readdir_r.c rewinddir.c rmdir.c rmdirr.c scandir.c \
++	seekdir.c telldir.c
++# end riscv65
  
  lib_a_CCASFLAGS = $(AM_CCASFLAGS)
  lib_a_CFLAGS = $(AM_CFLAGS)
-@@ -337,6 +339,30 @@
+@@ -337,6 +353,98 @@
  lib_a-ffs.obj: ffs.c
  	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-ffs.obj `if test -f 'ffs.c'; then $(CYGPATH_W) 'ffs.c'; else $(CYGPATH_W) '$(srcdir)/ffs.c'; fi`
  
++# riscv65
 +lib_a-access.o: access.c
 +	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-access.o `test -f 'access.c' || echo '$(srcdir)/'`access.c
 +
@@ -256,6 +366,54 @@ diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/Makefile.in newl
 +
 +lib_a-accessr.obj: accessr.c
 +	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-accessr.obj `if test -f 'accessr.c'; then $(CYGPATH_W) 'accessr.c'; else $(CYGPATH_W) '$(srcdir)/accessr.c'; fi`
++
++lib_a-alphasort.o: alphasort.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-alphasort.o `test -f 'alphasort.c' || echo '$(srcdir)/'`alphasort.c
++
++lib_a-alphasort.obj: alphasort.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-alphasort.obj `if test -f 'alphasort.c'; then $(CYGPATH_W) 'alphasort.c'; else $(CYGPATH_W) '$(srcdir)/alphasort.c'; fi`
++
++lib_a-closedir.o: closedir.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-closedir.o `test -f 'closedir.c' || echo '$(srcdir)/'`closedir.c
++
++lib_a-closedir.obj: closedir.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-closedir.obj `if test -f 'closedir.c'; then $(CYGPATH_W) 'closedir.c'; else $(CYGPATH_W) '$(srcdir)/closedir.c'; fi`
++
++lib_a-dirfd.o: dirfd.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-dirfd.o `test -f 'dirfd.c' || echo '$(srcdir)/'`dirfd.c
++
++lib_a-dirfd.obj: dirfd.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-dirfd.obj `if test -f 'dirfd.c'; then $(CYGPATH_W) 'dirfd.c'; else $(CYGPATH_W) '$(srcdir)/dirfd.c'; fi`
++
++lib_a-fdopendir.o: fdopendir.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fdopendir.o `test -f 'fdopendir.c' || echo '$(srcdir)/'`fdopendir.c
++
++lib_a-fdopendir.obj: fdopendir.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-fdopendir.obj `if test -f 'fdopendir.c'; then $(CYGPATH_W) 'fdopendir.c'; else $(CYGPATH_W) '$(srcdir)/fdopendir.c'; fi`
++
++lib_a-opendir.o: opendir.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-opendir.o `test -f 'opendir.c' || echo '$(srcdir)/'`opendir.c
++
++lib_a-opendir.obj: opendir.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-opendir.obj `if test -f 'opendir.c'; then $(CYGPATH_W) 'opendir.c'; else $(CYGPATH_W) '$(srcdir)/opendir.c'; fi`
++
++lib_a-readdir.o: readdir.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-readdir.o `test -f 'readdir.c' || echo '$(srcdir)/'`readdir.c
++
++lib_a-readdir.obj: readdir.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-readdir.obj `if test -f 'readdir.c'; then $(CYGPATH_W) 'readdir.c'; else $(CYGPATH_W) '$(srcdir)/readdir.c'; fi`
++
++lib_a-readdir_r.o: readdir_r.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-readdir_r.o `test -f 'readdir_r.c' || echo '$(srcdir)/'`readdir_r.c
++
++lib_a-readdir_r.obj: readdir_r.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-readdir_r.obj `if test -f 'readdir_r.c'; then $(CYGPATH_W) 'readdir_r.c'; else $(CYGPATH_W) '$(srcdir)/readdir_r.c'; fi`
++
++lib_a-rewinddir.o: rewinddir.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-rewinddir.o `test -f 'rewinddir.c' || echo '$(srcdir)/'`rewinddir.c
++
++lib_a-rewinddir.obj: rewinddir.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-rewinddir.obj `if test -f 'rewinddir.c'; then $(CYGPATH_W) 'rewinddir.c'; else $(CYGPATH_W) '$(srcdir)/rewinddir.c'; fi`
 +
 +lib_a-rmdir.o: rmdir.c
 +	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-rmdir.o `test -f 'rmdir.c' || echo '$(srcdir)/'`rmdir.c
@@ -269,9 +427,100 @@ diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/Makefile.in newl
 +lib_a-rmdirr.obj: rmdirr.c
 +	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-rmdirr.obj `if test -f 'rmdirr.c'; then $(CYGPATH_W) 'rmdirr.c'; else $(CYGPATH_W) '$(srcdir)/rmdirr.c'; fi`
 +
++lib_a-scandir.o: scandir.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-scandir.o `test -f 'scandir.c' || echo '$(srcdir)/'`scandir.c
++
++lib_a-scandir.obj: scandir.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-scandir.obj `if test -f 'scandir.c'; then $(CYGPATH_W) 'scandir.c'; else $(CYGPATH_W) '$(srcdir)/scandir.c'; fi`
++
++lib_a-seekdir.o: seekdir.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-seekdir.o `test -f 'seekdir.c' || echo '$(srcdir)/'`seekdir.c
++
++lib_a-seekdir.obj: seekdir.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-seekdir.obj `if test -f 'seekdir.c'; then $(CYGPATH_W) 'seekdir.c'; else $(CYGPATH_W) '$(srcdir)/seekdir.c'; fi`
++
++lib_a-telldir.o: telldir.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-telldir.o `test -f 'telldir.c' || echo '$(srcdir)/'`telldir.c
++
++lib_a-telldir.obj: telldir.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-telldir.obj `if test -f 'telldir.c'; then $(CYGPATH_W) 'telldir.c'; else $(CYGPATH_W) '$(srcdir)/telldir.c'; fi`
++# end riscv65
++
  ID: $(HEADERS) $(SOURCES) $(LISP) $(TAGS_FILES)
  	list='$(SOURCES) $(HEADERS) $(LISP) $(TAGS_FILES)'; \
  	unique=`for i in $$list; do \
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/opendir.c newlib-4.1.0/newlib/libc/machine/riscv/opendir.c
+--- newlib-4.1.0-original/newlib/libc/machine/riscv/opendir.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/newlib/libc/machine/riscv/opendir.c	2022-06-14 23:26:35.544799974 -0400
+@@ -0,0 +1,18 @@
++/* opendir.c for riscv65 */
++
++#include <stdlib.h>
++#include <dirent.h>
++#include <fcntl.h>
++
++DIR *opendir(const char *path)
++{
++    DIR *dirp = calloc(1, sizeof(DIR));
++    if (dirp != NULL) {
++        dirp->dd_fd = open(path, O_RDONLY|O_DIRECTORY, 0);
++        if (dirp->dd_fd < 0) {
++            free(dirp);
++            dirp = NULL;
++        }
++    }
++    return dirp;
++}
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/readdir.c newlib-4.1.0/newlib/libc/machine/riscv/readdir.c
+--- newlib-4.1.0-original/newlib/libc/machine/riscv/readdir.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/newlib/libc/machine/riscv/readdir.c	2022-06-15 19:52:08.220290096 -0400
+@@ -0,0 +1,16 @@
++/* readdir.c for riscv65 */
++
++#include <errno.h>
++#include <stdlib.h>
++#include <dirent.h>
++
++extern int _getdents(int fd, struct dirent *entry);
++
++struct dirent *readdir(DIR *dirp)
++{
++    int count = _getdents(dirp->dd_fd, &dirp->dd_dirent);
++    if (count < 0) {
++        errno = -count;
++    }
++    return count > 0 ? &dirp->dd_dirent : NULL;
++}
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/readdir_r.c newlib-4.1.0/newlib/libc/machine/riscv/readdir_r.c
+--- newlib-4.1.0-original/newlib/libc/machine/riscv/readdir_r.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/newlib/libc/machine/riscv/readdir_r.c	2022-06-15 19:52:10.728315208 -0400
+@@ -0,0 +1,13 @@
++/* readdir_r.c for riscv65 */
++
++#include <stdlib.h>
++#include <dirent.h>
++
++extern int _getdents(int fd, struct dirent *entries);
++
++int readdir_r(DIR *dirp, struct dirent *entry, struct dirent **result)
++{
++    int count = _getdents(dirp->dd_fd, entry);
++    *result = (count > 0) ? entry : NULL;
++    return count >= 0 ? 0 : -count;
++}
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/rewinddir.c newlib-4.1.0/newlib/libc/machine/riscv/rewinddir.c
+--- newlib-4.1.0-original/newlib/libc/machine/riscv/rewinddir.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/newlib/libc/machine/riscv/rewinddir.c	2022-06-15 04:37:17.967252466 -0400
+@@ -0,0 +1,9 @@
++/* rewinddir.c for riscv65 */
++
++#include <dirent.h>
++#include <unistd.h>
++
++void rewinddir(DIR *dirp)
++{
++    lseek(dirp->dd_fd, 0, SEEK_SET);
++}
 diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/rmdir.c newlib-4.1.0/newlib/libc/machine/riscv/rmdir.c
 --- newlib-4.1.0-original/newlib/libc/machine/riscv/rmdir.c	1969-12-31 19:00:00.000000000 -0500
 +++ newlib-4.1.0/newlib/libc/machine/riscv/rmdir.c	2022-06-07 21:35:29.326167207 -0400
@@ -350,6 +599,150 @@ diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/rmdirr.c newlib-
 +
 +
 +#endif /* ! defined (REENTRANT_SYSCALLS_PROVIDED) */
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/scandir.c newlib-4.1.0/newlib/libc/machine/riscv/scandir.c
+--- newlib-4.1.0-original/newlib/libc/machine/riscv/scandir.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/newlib/libc/machine/riscv/scandir.c	2022-06-15 19:28:25.774521497 -0400
+@@ -0,0 +1,89 @@
++/* scandir.c for riscv65 */
++
++#include <errno.h>
++#include <stdlib.h>
++#include <dirent.h>
++
++int scandir(const char *dir, struct dirent ***namelist,
++       int (*sel)(const struct dirent *),
++       int (*compar)(const struct dirent **, const struct dirent **))
++{
++    /* Allocate this many additional entries when needed */
++    const size_t alloc_size = 10;
++
++    struct dirent **nlist = NULL; /* custodial */
++    DIR *dirp = NULL; /* custodial */
++
++    int err = errno;
++    size_t nlsize = 0;
++    size_t nlalloc = 1;
++
++    nlist = malloc(sizeof(struct dirent *));
++    if (nlist == NULL) {
++        goto error;
++    }
++
++    dirp = opendir(dir);
++    if (dirp == NULL) {
++        goto error;
++    }
++
++    while (1) {
++        /* Read a directory entry */
++        struct dirent *entp;
++        struct dirent ent;
++        int err = readdir_r(dirp, &ent, &entp);
++        if (err != 0) {
++            errno = err;
++            goto error;
++        }
++        if (entp == NULL) {
++            break;
++        }
++
++        if (sel == NULL || (*sel)(&ent)) {
++            if (nlsize + 1 >= nlalloc) {
++                /* Extend nlist when it gets full */
++                size_t new_alloc = nlalloc + alloc_size;
++                struct dirent **new_list = realloc(
++                        nlist,
++                        new_alloc * sizeof(struct dirent *));
++                if (new_list == NULL) {
++                    goto error;
++                }
++                nlist = new_list;
++                nlalloc = new_alloc;
++            }
++            /* Add the new entry to nlist */
++            nlist[nlsize] = malloc(sizeof(struct dirent));
++            if (nlist[nlsize] == NULL) {
++                goto error;
++            }
++            *nlist[nlsize++] = ent;
++        }
++    }
++
++    /* Successful completion */
++    errno = err;
++    closedir(dirp);
++    nlist[nlsize] = NULL;
++    qsort(nlist, nlsize, sizeof(nlist[0]),
++            (int (*)(const void *, const void *))compar);
++    return nlsize;
++
++error:
++    /* Clean up after any error */
++    err = errno;
++    if (dirp != NULL) {
++        closedir(dirp);
++    }
++    if (nlist != NULL) {
++        for (size_t i = 0; i < nlsize; ++i) {
++            free(nlist[i]);
++        }
++        free(nlist);
++    }
++    errno = err;
++    *namelist = NULL;
++    return -1;
++}
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/seekdir.c newlib-4.1.0/newlib/libc/machine/riscv/seekdir.c
+--- newlib-4.1.0-original/newlib/libc/machine/riscv/seekdir.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/newlib/libc/machine/riscv/seekdir.c	2022-06-15 04:38:33.336498580 -0400
+@@ -0,0 +1,9 @@
++/* seekdir.c for riscv65 */
++
++#include <dirent.h>
++#include <unistd.h>
++
++void seekdir(DIR *dirp, long loc)
++{
++    lseek(dirp->dd_fd, loc, SEEK_SET);
++}
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/sys/dirent.h newlib-4.1.0/newlib/libc/machine/riscv/sys/dirent.h
+--- newlib-4.1.0-original/newlib/libc/machine/riscv/sys/dirent.h	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/newlib/libc/machine/riscv/sys/dirent.h	2022-06-15 05:10:40.755524306 -0400
+@@ -0,0 +1,20 @@
++/* sys/dirent.h for riscv65 */
++
++#ifndef _SYS_DIRENT_H
++#define _SYS_DIRENT_H
++
++#include <sys/syslimits.h>
++#include <sys/types.h>
++
++struct dirent {
++    off_t d_off;
++    char  d_name[NAME_MAX+1];
++};
++
++typedef struct {
++    int dd_fd;
++    /* For return from readdir */
++    struct dirent dd_dirent;
++} DIR;
++
++#endif
+Binary files newlib-4.1.0-original/newlib/libc/machine/riscv/sys/.dirent.h.swp and newlib-4.1.0/newlib/libc/machine/riscv/sys/.dirent.h.swp differ
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/telldir.c newlib-4.1.0/newlib/libc/machine/riscv/telldir.c
+--- newlib-4.1.0-original/newlib/libc/machine/riscv/telldir.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/newlib/libc/machine/riscv/telldir.c	2022-06-15 05:15:37.623465329 -0400
+@@ -0,0 +1,9 @@
++/* telldir.c for riscv65 */
++
++#include <dirent.h>
++#include <unistd.h>
++
++long telldir(DIR *dirp)
++{
++    return lseek(dirp->dd_fd, 0, SEEK_CUR);
++}
 diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/reent/chdirr.c newlib-4.1.0/newlib/libc/reent/chdirr.c
 --- newlib-4.1.0-original/newlib/libc/reent/chdirr.c	1969-12-31 19:00:00.000000000 -0500
 +++ newlib-4.1.0/newlib/libc/reent/chdirr.c	2022-06-03 23:26:55.343874018 -0400
@@ -550,6 +943,7 @@ diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/reent/Makefile.in newlib-4.1.0
  lib_a-writer.o: writer.c
  	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-writer.o `test -f 'writer.c' || echo '$(srcdir)/'`writer.c
  
+Binary files newlib-4.1.0-original/newlib/libc/sys/linux/sys/.dirent.h.swp and newlib-4.1.0/newlib/libc/sys/linux/sys/.dirent.h.swp differ
 diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/syscalls/Makefile.am newlib-4.1.0/newlib/libc/syscalls/Makefile.am
 --- newlib-4.1.0-original/newlib/libc/syscalls/Makefile.am	2020-12-18 18:50:49.000000000 -0500
 +++ newlib-4.1.0/newlib/libc/syscalls/Makefile.am	2022-06-09 20:28:23.076684533 -0400
