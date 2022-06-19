@@ -18,6 +18,7 @@ main(void)
     time(&tv1);
     printf("time=%s\n", asctime(gmtime(&tv1)));
 
+#if 0
     DIR *dirp = opendir("/dir.1");
     printf("opendir returns %p\n", dirp);
     printf("sizeof(off_t) = %u\n", (unsigned)sizeof(off_t));
@@ -28,6 +29,7 @@ main(void)
     }
 
     closedir(dirp);
+#endif
 
 #if 0
     errno = 0;
@@ -54,8 +56,8 @@ main(void)
     printf("input string is \"%s\"", str);
 #endif
 
-#if 0
     static const char path[] = "/dir.1/dir.2/test.txt";
+#if 0
     errno = 0;
     int rc = unlink(path);
     printf("unlink returns: %d errno=%d\n", rc, errno);
@@ -70,39 +72,26 @@ main(void)
         printf("unlink returns: %d errno=%d\n", rc, errno);
     }
 #endif
-#if 0
-#if 0
-    int x;
-#endif
+#if 1
+    errno = 0;
     int rc = chdir("/dir.1");
-    printf("chdir returns: %d\n", rc);
+    printf("chdir returns: %d errno=%d\n", rc, errno);
+    errno = 0;
     rc = chdir("dir.2");
-    printf("chdir returns: %d\n", rc);
+    printf("chdir returns: %d errno=%d\n", rc, errno);
 #endif
 
-#if 0
-    int fd = open("test.txt", O_RDONLY, 0);
+#if 1
+    int fddir = open("/dir.1/dir.2", O_RDONLY|O_DIRECTORY, 0);
+    int fd = _openat(fddir, "test.txt", O_RDONLY, 0);
     printf("len=%u open returns: %d\n", (unsigned)strlen(path), fd);
 #endif
-#if 0
+#if 1
     struct stat st;
-    //memset(&st, 0, sizeof(st));
-    chdir("/dir.1/dir.2");
-    char buf[512];
-    char *rcp = getcwd(buf, sizeof(buf));
-    printf("getcwd returns: %p %s\n", rcp, rcp ? buf : "");
-    int rc = access("test.txt", 0);
-    printf("test.txt: rc = %d\n", rc);
-    rcp = getcwd(buf, sizeof(buf));
-    printf("getcwd returns: %p %s\n", rcp, rcp ? buf : "");
-    errno = 0;
-    rc = access("test.txt", 0);
-    printf("test.txt: rc = %d errno = %d\n", rc, errno);
-    errno = 0;
-    rc = access("bogus.txt", 0);
-    printf("bogus.txt: rc = %d errno = %d\n", rc, errno);
+    rc = fstat(fd, &st);
+    printf("fstat returns %d\n", rc);
 #endif
-#if 0
+#if 1
     printf("st_dev = %ld\n", (long)st.st_dev);
     printf("sizeof(st_ino) = %lu\n", (unsigned long)sizeof(st.st_ino));
     printf("st_ino = %ld\n", (long)st.st_ino);
@@ -118,14 +107,14 @@ main(void)
     printf("st_ctim = %ld\n", (long)st.st_ctim.tv_sec);
     printf("st_mtim = %ld\n", (long)st.st_mtim.tv_sec);
 #endif
-#if 0
+#if 1
     close(fd);
 #endif
 
 #if 0
     // Seek forward, from end
     long pos = lseek(fd, -60000, SEEK_END);
-    x = errno;
+    int x = errno;
     printf("pos=%ld\n", pos);
     errno = x;
     if (pos == -1) {
@@ -164,7 +153,7 @@ main(void)
     static const char path2[] = "/dir.1/dir.2/test-2.txt";
     fd2 = open(path2, O_RDWR | O_CREAT, 0644);
     x = errno;
-    printf("fd2=%d\n", fd2);
+    printf("line %d: fd2=%d\n", __LINE__, fd2);
     errno = x;
     if (fd2 < 0) {
         perror(path2);
@@ -174,7 +163,7 @@ main(void)
     // This is supposed to fail
     fd2 = open(path, O_RDWR | O_CREAT | O_EXCL, 0644);
     x = errno;
-    printf("fd2=%d\n", fd2);
+    printf("line %d: fd2=%d\n", __LINE__, fd2);
     errno = x;
     if (fd2 < 0) {
         perror(path);
@@ -184,7 +173,7 @@ main(void)
     // This should also fail: the file is already open
     fd2 = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
     x = errno;
-    printf("fd2=%d\n", fd2);
+    printf("line %d: fd2=%d\n", __LINE__, fd2);
     errno = x;
     if (fd2 < 0) {
         perror(path);
@@ -194,7 +183,7 @@ main(void)
     // This should succeed
     fd2 = open(path, O_RDONLY, 0);
     x = errno;
-    printf("fd2=%d\n", fd2);
+    printf("line %d: fd2=%d\n", __LINE__, fd2);
     errno = x;
     if (fd2 < 0) {
         perror(path);
@@ -202,16 +191,19 @@ main(void)
     close(fd2);
 
     close(fd);
+#endif
 
+#if 0
     // This should succeed, and truncate the file
     fd2 = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
     x = errno;
-    printf("fd2=%d\n", fd2);
+    printf("line %d: fd2=%d\n", __LINE__, fd2);
     errno = x;
     if (fd2 < 0) {
         perror(path);
     }
     close(fd2);
+    printf("line %d: Done\n", __LINE__);
 #endif
 
 #if 0

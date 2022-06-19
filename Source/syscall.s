@@ -314,58 +314,26 @@ DOS_CMD_GET_TIME   = $26
 .global SYS_close
 .proc SYS_close
 
-    ; File handles above 255 are not assigned
-    lda _RISCV_ireg_1+REG_a0
-    ora _RISCV_ireg_2+REG_a0
-    ora _RISCV_ireg_3+REG_a0
-    bne bad_file
-
-    ; Ignore any attempt to close file 0, 1 or 2
-    lda _RISCV_ireg_0+REG_a0
-    sec
-    sbc #3
-    bcc file_closed
-
-    ; A has index to open_files
-    ; Check that it is valid 
-    cmp #MAX_FILES
+    ; Set local_addr according to the file handle
+    jsr set_file_ptr
     bcs bad_file
 
-        sta file_handle
-
-        ; Build pointer to open_files
-        tax
-        lda open_files_lo,x
-        sta local_addr+0
-        lda open_files_hi,x
-        sta local_addr+1
-
-        ; Check that the file was open
-        ldy #0
-        lda (local_addr),y
-        beq bad_file        ; File was not open
-
-        ; If file was open for writing, update the directory entry
-        ldy #filedata::open_flags+0
-        lda (local_addr),y
-        and #O_ACCMODE
-        beq end_update
-            jsr write_dir_entry
-        end_update:
-        sta _RISCV_ireg_0+REG_a0 ; always 0 if O_ACCMODE
-
-        ; Mark the file as closed
-        lda #0
-        tay
-        sta (local_addr),y
-        ; Report error from write_dir_entry
-        bcc :+
-            lda #$FF
-            sta _RISCV_ireg_1+REG_a0
-            sta _RISCV_ireg_2+REG_a0
-            sta _RISCV_ireg_3+REG_a0
-            rts
-        :
+    ; If file is open for writing, update the directory entry
+    ldy #filedata::open_flags+0
+    lda (local_addr),y
+    and #O_ACCMODE
+    clc ; no error if write_dir_entry not called
+    beq end_update
+        jsr write_dir_entry
+    end_update:
+    ; Mark the file as closed
+    tax
+    lda #0
+    tay
+    sta (local_addr),y
+    txa
+    ; Report error from write_dir_entry
+    bcs error
 
 file_closed:
     lda #0
@@ -376,7 +344,12 @@ file_closed:
     rts
 
 bad_file:
-    set_errno EBADF
+    ; Ignore any attempt to close file 0, 1 or 2
+    cmp #$100-ESPIPE
+    beq file_closed
+    ; Else return error
+error:
+    set_errno
     rts
 
 .endproc
@@ -391,38 +364,12 @@ bad_file:
 .global SYS_lseek
 .proc SYS_lseek
 
-    ; Handle must refer to an open file
-    lda _RISCV_ireg_1+REG_a0
-    ora _RISCV_ireg_2+REG_a0
-    ora _RISCV_ireg_3+REG_a0
-    bne bad_file
-    lda _RISCV_ireg_0+REG_a0
-    sec
-    sbc #3
-    bcs file_ok_1
-        set_errno ESPIPE
+    ; Set local_addr
+    jsr set_file_ptr
+    bcc :+
+        set_errno
         rts
-    file_ok_1:
-    cmp #MAX_FILES
-    bcs bad_file
-
-    sta file_handle
-
-    ; Build pointer to open_files
-    tax
-    lda open_files_lo,x
-    sta local_addr+0
-    lda open_files_hi,x
-    sta local_addr+1
-
-    ; Check that the file is open
-    ldy #0
-    lda (local_addr),y
-    bne file_ok_2       ; Else file is not open
-    bad_file:
-        set_errno EBADF
-        rts
-    file_ok_2:
+    :
 
     ; Get the origin from which the seek shall be done
     lda _RISCV_ireg_1+REG_a2
@@ -660,11 +607,7 @@ bad_file:
 
 io_error:
     ; error code in A
-    sta _RISCV_ireg_0+REG_a0
-    lda #$FF
-    sta _RISCV_ireg_1+REG_a0
-    sta _RISCV_ireg_2+REG_a0
-    sta _RISCV_ireg_3+REG_a0
+    set_errno
     rts
 
 .endproc
@@ -753,13 +696,30 @@ lseek_location: .res 4
         rts
     write_ok:
 
-    ; Check for special file handles 0, 1 and 2
-    lda _RISCV_ireg_1+REG_a0
-    ora _RISCV_ireg_2+REG_a0
-    ora _RISCV_ireg_3+REG_a0
-    bne bad_file
+    ; Set local_addr
+    jsr set_file_ptr
+    bcc do_file_read
+    cmp #$100-ESPIPE
+    beq do_tty_read
+        set_errno
+        rts
+    do_file_read:
+        ; Handle designates an open file
+        jmp read_file
+    do_tty_read:
+        ; Handle is one of the special handles
+        jmp read_tty
+
+.endproc
+
+; Read one of the special handles
+; io_addr and io_size are set and checked
+.proc read_tty
+
+    ; Can only read the keyboard
     lda _RISCV_ireg_0+REG_a0
-    bne check_output
+    bne bad_handle
+
         ; Handle 0 (standard input)
         ; Call GETIN to get a single character
         ; TODO: Provide a means to access CHRIN for Kernal-style line input
@@ -785,325 +745,320 @@ lseek_location: .res 4
         jsr write_io_xfer
 
         rts
-    check_output:
-    sec
-    sbc #3
-    bcs check_file
-    bad_file:
+
+    bad_handle:
         ; Handle 1 (standard output) or 2 (standard error)
         ; These are not valid
         set_errno EBADF
         rts
-    check_file:
-    ; A has index to open_files
-    ; Check that it is valid 
-    cmp #MAX_FILES
-    bcs bad_file
-        sta file_handle
 
-        ; Build pointer to open_files
-        tax
-        lda open_files_lo,x
-        sta local_addr+0
-        lda open_files_hi,x
-        sta local_addr+1
+.endproc
 
-        ; Check that the file is open
-        ldy #0
+; Read from a file
+; local_addr, io_addr and io_size are set and checked
+.proc read_file
+
+    ; Check that the file is open for reading
+    ldy #filedata::open_flags+0
+    lda (local_addr),y
+    and #O_ACCMODE
+    cmp #O_WRONLY
+    bne :+
+        set_errno EBADF
+        rts
+    :
+
+    ; Disallow reading a directory; use getdents for this
+    ldy #filedata::attributes
+    lda (local_addr),y
+    and #ATTR_DIRECTORY
+    beq :+
+        set_errno EISDIR
+        rts
+    :
+
+    ; Read loop
+    jmp @end_read_loop
+    @read_loop:
+
+        ; Are we reading from the last cluster?
+        ldy #filedata::cluster_count+0
         lda (local_addr),y
-        beq bad_file
-
-        ; Check that the file is open for reading
-        ldy #filedata::open_flags+0
+        ldy #filedata::cluster_pos+0
+        cmp (local_addr),y
+        bne @whole_cluster
+        ldy #filedata::cluster_count+1
         lda (local_addr),y
-        and #O_ACCMODE
-        cmp #O_WRONLY
-        beq bad_file
-
-        ; TODO: Handle directory specially
-
-        ; Read loop
-        jmp @end_read_loop
-        @read_loop:
-
-            ; Are we reading from the last cluster?
-            ldy #filedata::cluster_count+0
+        ldy #filedata::cluster_pos+1
+        cmp (local_addr),y
+        bne @whole_cluster
+        ldy #filedata::cluster_count+2
+        lda (local_addr),y
+        ldy #filedata::cluster_pos+2
+        cmp (local_addr),y
+        bne @whole_cluster
+            ; This is the last cluster.
+            ; The maximum size is cluster_partial - cluster_ptr.
+            sec
+            ldy #filedata::cluster_partial+0
             lda (local_addr),y
-            ldy #filedata::cluster_pos+0
-            cmp (local_addr),y
-            bne @whole_cluster
-            ldy #filedata::cluster_count+1
+            ldy #filedata::cluster_ptr+0
+            sbc (local_addr),y
+            sta rw_size+0
+            ldy #filedata::cluster_partial+1
             lda (local_addr),y
-            ldy #filedata::cluster_pos+1
-            cmp (local_addr),y
-            bne @whole_cluster
-            ldy #filedata::cluster_count+2
+            ldy #filedata::cluster_ptr+1
+            sbc (local_addr),y
+            sta rw_size+1
+            ldy #filedata::cluster_partial+2
             lda (local_addr),y
-            ldy #filedata::cluster_pos+2
-            cmp (local_addr),y
-            bne @whole_cluster
-                ; This is the last cluster.
-                ; The maximum size is cluster_partial - cluster_ptr.
-                sec
-                ldy #filedata::cluster_partial+0
+            ldy #filedata::cluster_ptr+2
+            sbc (local_addr),y
+            sta rw_size+2
+            ; If this is zero, we're at end of file
+            ora rw_size+0
+            ora rw_size+1
+            beq :+
+                jmp @set_size   ; Read the next set of bytes
+            :
+                jmp @end_read   ; Size is zero; this is EOF
+        @whole_cluster:
+            ; This is not the last cluster.
+            ; The maximum size is fs_cluster_size - cluster_ptr.
+            sec
+            ldy #filedata::cluster_ptr+0
+            lda #0
+            sbc (local_addr),y
+            sta rw_size+0
+            iny
+            lda fs_cluster_size+0
+            sbc (local_addr),y
+            sta rw_size+1
+            iny
+            lda fs_cluster_size+1
+            sbc (local_addr),y
+            sta rw_size+2
+            ; If this is zero, advance to the next cluster
+            ora rw_size+0
+            ora rw_size+1
+            bne @set_size
+                ; Get the next cluster number
+                ldy #filedata::current_cluster+0
                 lda (local_addr),y
-                ldy #filedata::cluster_ptr+0
-                sbc (local_addr),y
-                sta rw_size+0
-                ldy #filedata::cluster_partial+1
+                sta cluster+0
+                iny
                 lda (local_addr),y
-                ldy #filedata::cluster_ptr+1
-                sbc (local_addr),y
-                sta rw_size+1
-                ldy #filedata::cluster_partial+2
+                sta cluster+1
+                iny
                 lda (local_addr),y
-                ldy #filedata::cluster_ptr+2
-                sbc (local_addr),y
-                sta rw_size+2
-                ; If this is zero, we're at end of file
-                ora rw_size+0
-                ora rw_size+1
-                beq :+
-                    jmp @set_size   ; Read the next set of bytes
-                :
-                    jmp @end_read   ; Size is zero; this is EOF
-            @whole_cluster:
-                ; This is not the last cluster.
-                ; The maximum size is fs_cluster_size - cluster_ptr.
-                sec
+                sta cluster+2
+                jsr next_cluster
+                bcc @cluster_ok
+                    ; Can produce EOF if the file size is an exact multiple
+                    ; of the cluster size
+                    cmp #$100-ENOENT
+                    jeq @end_read
+                    ; Otherwise return error
+                    sta _RISCV_ireg_0+REG_a0
+                    lda #$FF
+                    sta _RISCV_ireg_1+REG_a0
+                    sta _RISCV_ireg_2+REG_a0
+                    sta _RISCV_ireg_3+REG_a0
+                    rts
+                @cluster_ok:
+                ; Update the position
+                ldy #filedata::current_cluster+0
+                lda cluster+0
+                sta (local_addr),y
+                iny
+                lda cluster+1
+                sta (local_addr),y
+                iny
+                lda cluster+2
+                sta (local_addr),y
+                ldy #filedata::cluster_pos+0
+                ; There's no inc (xx),y; do this the long way
+                clc
+                lda (local_addr),y
+                adc #1
+                sta (local_addr),y
+                iny
+                lda (local_addr),y
+                adc #0
+                sta (local_addr),y
+                iny
+                lda (local_addr),y
+                adc #0
+                sta (local_addr),y
                 ldy #filedata::cluster_ptr+0
                 lda #0
-                sbc (local_addr),y
-                sta rw_size+0
+                sta (local_addr),y
                 iny
-                lda fs_cluster_size+0
-                sbc (local_addr),y
-                sta rw_size+1
+                sta (local_addr),y
                 iny
-                lda fs_cluster_size+1
-                sbc (local_addr),y
-                sta rw_size+2
-                ; If this is zero, advance to the next cluster
-                ora rw_size+0
-                ora rw_size+1
-                bne @set_size
-                    ; Get the next cluster number
-                    ldy #filedata::current_cluster+0
-                    lda (local_addr),y
-                    sta cluster+0
-                    iny
-                    lda (local_addr),y
-                    sta cluster+1
-                    iny
-                    lda (local_addr),y
-                    sta cluster+2
-                    jsr next_cluster
-                    bcc @cluster_ok
-                        ; Can produce EOF if the file size is an exact multiple
-                        ; of the cluster size
-                        cmp #$100-ENOENT
-                        jeq @end_read
-                        ; Otherwise return error
-                        sta _RISCV_ireg_0+REG_a0
-                        lda #$FF
-                        sta _RISCV_ireg_1+REG_a0
-                        sta _RISCV_ireg_2+REG_a0
-                        sta _RISCV_ireg_3+REG_a0
-                        rts
-                    @cluster_ok:
-                    ; Update the position
-                    ldy #filedata::current_cluster+0
-                    lda cluster+0
-                    sta (local_addr),y
-                    iny
-                    lda cluster+1
-                    sta (local_addr),y
-                    iny
-                    lda cluster+2
-                    sta (local_addr),y
-                    ldy #filedata::cluster_pos+0
-                    ; There's no inc (xx),y; do this the long way
-                    clc
-                    lda (local_addr),y
-                    adc #1
-                    sta (local_addr),y
-                    iny
-                    lda (local_addr),y
-                    adc #0
-                    sta (local_addr),y
-                    iny
-                    lda (local_addr),y
-                    adc #0
-                    sta (local_addr),y
-                    ldy #filedata::cluster_ptr+0
-                    lda #0
-                    sta (local_addr),y
-                    iny
-                    sta (local_addr),y
-                    iny
-                    sta (local_addr),y
-                    ; Repeat the loop without having read any data
-                    jeq @read_loop
+                sta (local_addr),y
+                ; Repeat the loop without having read any data
+                jeq @read_loop
 
-            @set_size:
-            ; Use the lesser of the size remaining or the maximum size
-            lda io_size+0
-            cmp rw_size+0
-            lda io_size+1
-            sbc rw_size+1
-            lda io_size+2
-            sbc rw_size+2
-            bcs @do_read
-                lda io_size+0
-                sta rw_size+0
-                lda io_size+1
-                sta rw_size+1
-                lda io_size+2
-                sta rw_size+2
-            @do_read:
-
-            ; Seek to the position to be read:
-            ; Current cluster number
-            ldy #filedata::current_cluster
-            lda (local_addr),y
-            sta seek_location+1
-            iny
-            lda (local_addr),y
-            sta seek_location+2
-            iny
-            lda (local_addr),y
-            ldx fs_cluster_shift
-            beq @end_shift
-            @shift:
-                asl seek_location+1
-                rol seek_location+2
-                rol a
-            dex
-            bne @shift
-            @end_shift:
-            sta seek_location+3
-            ; Add fs_cluster_base
-            clc
-            lda fs_cluster_base+0
-            adc seek_location+1
-            sta seek_location+1
-            lda fs_cluster_base+1
-            adc seek_location+2
-            sta seek_location+2
-            lda fs_cluster_base+2
-            adc seek_location+3
-            sta seek_location+3
-            ; Add cluster_ptr
-            ldy #filedata::cluster_ptr
-            lda (local_addr),y
-            sta seek_location+0
-            iny
-            clc
-            lda (local_addr),y
-            adc seek_location+1
-            sta seek_location+1
-            iny
-            lda (local_addr),y
-            adc seek_location+2
-            sta seek_location+2
-            lda #0
-            adc seek_location+3
-            sta seek_location+3
-            ; Seek
-            jsr do_seek
-            bcc @seek_ok
-            @eio:
-                set_errno EIO
-                rts
-            @seek_ok:
-
-            ; Transfer directly from volume to REU
-            lda #ULTIDOS_TARGET
-            sta CMD_DATA
-            lda #DOS_CMD_LOAD_REU
-            sta CMD_DATA
-            lda io_addr+0
-            sta CMD_DATA
-            lda io_addr+1
-            sta CMD_DATA
-            lda io_addr+2
-            sta CMD_DATA
-            lda #0
-            sta CMD_DATA
-            lda rw_size+0
-            sta CMD_DATA
-            lda rw_size+1
-            sta CMD_DATA
-            lda rw_size+2
-            sta CMD_DATA
-            lda #0
-            sta CMD_DATA
-            jsr get_cmd_response
-            lda io_xfer+256
-            cmp #'0'
-            bne @eio
-
-            ; Advance file position
-            clc
-            ldy #filedata::cluster_ptr
-            lda rw_size+0
-            adc (local_addr),y
-            sta (local_addr),y
-            iny
-            lda rw_size+1
-            adc (local_addr),y
-            sta (local_addr),y
-            iny
-            lda rw_size+2
-            adc (local_addr),y
-            sta (local_addr),y
-
-            ; Advance io_addr
-            clc
-            lda rw_size+0
-            adc io_addr+0
-            sta io_addr+0
-            lda rw_size+1
-            adc io_addr+1
-            sta io_addr+1
-            lda rw_size+2
-            adc io_addr+2
-            sta io_addr+2
-
-            ; Advance io_size
-            sec
-            lda io_size+0
-            sbc rw_size+0
-            sta io_size+0
-            lda io_size+1
-            sbc rw_size+1
-            sta io_size+1
-            lda io_size+2
-            sbc rw_size+2
-            sta io_size+2
-
-        ; Continue until read is complete
-        @end_read_loop:
+        @set_size:
+        ; Use the lesser of the size remaining or the maximum size
         lda io_size+0
-        ora io_size+1
-        ora io_size+2
-        jne @read_loop
-        @end_read:
+        cmp rw_size+0
+        lda io_size+1
+        sbc rw_size+1
+        lda io_size+2
+        sbc rw_size+2
+        bcs @do_read
+            lda io_size+0
+            sta rw_size+0
+            lda io_size+1
+            sta rw_size+1
+            lda io_size+2
+            sta rw_size+2
+        @do_read:
 
-        ; Return the number of bytes read
-        sec
-        lda _RISCV_ireg_0+REG_a2
-        sbc io_size+0
-        sta _RISCV_ireg_0+REG_a0
-        lda _RISCV_ireg_1+REG_a2
-        sbc io_size+1
-        sta _RISCV_ireg_1+REG_a0
-        lda _RISCV_ireg_2+REG_a2
-        sbc io_size+2
-        sta _RISCV_ireg_2+REG_a0
+        ; Seek to the position to be read:
+        ; Current cluster number
+        ldy #filedata::current_cluster
+        lda (local_addr),y
+        sta seek_location+1
+        iny
+        lda (local_addr),y
+        sta seek_location+2
+        iny
+        lda (local_addr),y
+        ldx fs_cluster_shift
+        beq @end_shift
+        @shift:
+            asl seek_location+1
+            rol seek_location+2
+            rol a
+        dex
+        bne @shift
+        @end_shift:
+        sta seek_location+3
+        ; Add fs_cluster_base
+        clc
+        lda fs_cluster_base+0
+        adc seek_location+1
+        sta seek_location+1
+        lda fs_cluster_base+1
+        adc seek_location+2
+        sta seek_location+2
+        lda fs_cluster_base+2
+        adc seek_location+3
+        sta seek_location+3
+        ; Add cluster_ptr
+        ldy #filedata::cluster_ptr
+        lda (local_addr),y
+        sta seek_location+0
+        iny
+        clc
+        lda (local_addr),y
+        adc seek_location+1
+        sta seek_location+1
+        iny
+        lda (local_addr),y
+        adc seek_location+2
+        sta seek_location+2
         lda #0
-        sta _RISCV_ireg_3+REG_a0
-        rts
+        adc seek_location+3
+        sta seek_location+3
+        ; Seek
+        jsr do_seek
+        bcc @seek_ok
+        @eio:
+            set_errno EIO
+            rts
+        @seek_ok:
+
+        ; Transfer directly from volume to REU
+        lda #ULTIDOS_TARGET
+        sta CMD_DATA
+        lda #DOS_CMD_LOAD_REU
+        sta CMD_DATA
+        lda io_addr+0
+        sta CMD_DATA
+        lda io_addr+1
+        sta CMD_DATA
+        lda io_addr+2
+        sta CMD_DATA
+        lda #0
+        sta CMD_DATA
+        lda rw_size+0
+        sta CMD_DATA
+        lda rw_size+1
+        sta CMD_DATA
+        lda rw_size+2
+        sta CMD_DATA
+        lda #0
+        sta CMD_DATA
+        jsr get_cmd_response
+        lda io_xfer+256
+        cmp #'0'
+        bne @eio
+
+        ; Advance file position
+        clc
+        ldy #filedata::cluster_ptr
+        lda rw_size+0
+        adc (local_addr),y
+        sta (local_addr),y
+        iny
+        lda rw_size+1
+        adc (local_addr),y
+        sta (local_addr),y
+        iny
+        lda rw_size+2
+        adc (local_addr),y
+        sta (local_addr),y
+
+        ; Advance io_addr
+        clc
+        lda rw_size+0
+        adc io_addr+0
+        sta io_addr+0
+        lda rw_size+1
+        adc io_addr+1
+        sta io_addr+1
+        lda rw_size+2
+        adc io_addr+2
+        sta io_addr+2
+
+        ; Advance io_size
+        sec
+        lda io_size+0
+        sbc rw_size+0
+        sta io_size+0
+        lda io_size+1
+        sbc rw_size+1
+        sta io_size+1
+        lda io_size+2
+        sbc rw_size+2
+        sta io_size+2
+
+    ; Continue until read is complete
+    @end_read_loop:
+    lda io_size+0
+    ora io_size+1
+    ora io_size+2
+    jne @read_loop
+    @end_read:
+
+    ; Return the number of bytes read
+    sec
+    lda _RISCV_ireg_0+REG_a2
+    sbc io_size+0
+    sta _RISCV_ireg_0+REG_a0
+    lda _RISCV_ireg_1+REG_a2
+    sbc io_size+1
+    sta _RISCV_ireg_1+REG_a0
+    lda _RISCV_ireg_2+REG_a2
+    sbc io_size+2
+    sta _RISCV_ireg_2+REG_a0
+    lda #0
+    sta _RISCV_ireg_3+REG_a0
+    rts
 
 .endproc
 
@@ -1138,353 +1093,345 @@ lseek_location: .res 4
         rts
     read_ok:
 
-    ; Check for special file handles 0, 1 and 2
-    lda _RISCV_ireg_1+REG_a0
-    ora _RISCV_ireg_2+REG_a0
-    ora _RISCV_ireg_3+REG_a0
-    bne check_file
+    ; Set local_addr
+    jsr set_file_ptr
+    bcc do_file_write
+    cmp #$100-ESPIPE
+    beq do_tty_write
+        set_errno
+        rts
+    do_file_write:
+        ; Handle designates an open file
+        jmp write_file
+    do_tty_write:
+        ; Handle is one of the special handles
+        jmp write_tty
+
+.endproc
+
+; Write one of the special handles
+; io_addr and io_size are set and checked
+.proc write_tty
+
     lda _RISCV_ireg_0+REG_a0
-    bne check_output
+    bne tty_ok
         ; Handle 0 (standard input; not valid)
         set_errno EBADF
         rts
-    check_output:
-    sec
-    sbc #3
-    bcs check_file
-        ; Handle 1 (standard output) or 2 (standard error)
-        @write_loop:
-            jsr read_io_block
-            lda io_count
-            beq @end_write_loop
-            lda #0
-            sta io_index
-            @write_byte:
-                ldx io_index
-                ldy io_xfer,x
-                lda ascii_to_pet,y
-                jsr CHROUT
-                inc io_index
-            dec io_count
-            bne @write_byte
-        beq @write_loop
-        @end_write_loop:
-        lda _RISCV_ireg_0+REG_a2
-        sta _RISCV_ireg_0+REG_a0
-        lda _RISCV_ireg_1+REG_a2
-        sta _RISCV_ireg_1+REG_a0
-        lda _RISCV_ireg_2+REG_a2
-        sta _RISCV_ireg_2+REG_a0
-        lda _RISCV_ireg_3+REG_a2
-        sta _RISCV_ireg_3+REG_a0
-        rts
-    check_file:
+    tty_ok:
 
-        sta file_handle
+    ; Handle 1 (standard output) or 2 (standard error)
+    @write_loop:
+        jsr read_io_block
+        lda io_count
+        beq @end_write_loop
+        lda #0
+        sta io_index
+        @write_byte:
+            ldx io_index
+            ldy io_xfer,x
+            lda ascii_to_pet,y
+            jsr CHROUT
+            inc io_index
+        dec io_count
+        bne @write_byte
+    beq @write_loop
+    @end_write_loop:
+    lda _RISCV_ireg_0+REG_a2
+    sta _RISCV_ireg_0+REG_a0
+    lda _RISCV_ireg_1+REG_a2
+    sta _RISCV_ireg_1+REG_a0
+    lda _RISCV_ireg_2+REG_a2
+    sta _RISCV_ireg_2+REG_a0
+    lda _RISCV_ireg_3+REG_a2
+    sta _RISCV_ireg_3+REG_a0
+    rts
 
-        ; Build pointer to open_files
-        tax
-        lda open_files_lo,x
-        sta local_addr+0
-        lda open_files_hi,x
-        sta local_addr+1
+.endproc
 
-        ; Check that the file is open
-        ldy #0
+; Write to a file
+; local_addr, io_addr and io_size are set and checked
+.proc write_file
+
+    ; Write loop
+    jmp @end_write_loop
+    @write_loop:
+
+        ; If current_cluster is 0, the file is empty; get the first cluster
+        ldy #filedata::current_cluster
         lda (local_addr),y
-        beq @bad_file
-
-        ; Check that the file is open for writing
-        ldy #filedata::open_flags+0
-        lda (local_addr),y
-        and #O_ACCMODE
-        cmp #O_RDONLY
-        bne @file_ok
-        @bad_file:
-            set_errno EBADF
-            rts
-
-        @file_ok:
-
-        ; Write loop
-        jmp @end_write_loop
-        @write_loop:
-
-            ; If current_cluster is 0, the file is empty; get the first cluster
-            ldy #filedata::current_cluster
+        iny
+        ora (local_addr),y
+        iny
+        ora (local_addr),y
+        bne @not_empty
+            ; A == 0
+            ; Create cluster and set its location in cluster_lo and cluster_hi
+            sta cluster+0
+            sta cluster+1
+            sta cluster+2
+            jsr add_cluster
+            bcs @io_error_1
+            ; Update current_cluster
+            ldy #filedata::cluster_lo+0
             lda (local_addr),y
+            ldy #filedata::current_cluster+0
+            sta (local_addr),y
+            ldy #filedata::cluster_lo+1
+            lda (local_addr),y
+            ldy #filedata::current_cluster+1
+            sta (local_addr),y
+            ldy #filedata::cluster_hi+0
+            lda (local_addr),y
+            ldy #filedata::current_cluster+2
+            sta (local_addr),y
+            ldy #filedata::cluster_hi+1
+            lda (local_addr),y
+            ldy #filedata::current_cluster+3
+            sta (local_addr),y
+        @not_empty:
+
+        ; We can write at most fs_cluster_size - cluster_ptr bytes
+        sec
+        ldy #filedata::cluster_ptr+0
+        lda #0
+        sbc (local_addr),y
+        sta rw_size+0
+        iny
+        lda fs_cluster_size+0
+        sbc (local_addr),y
+        sta rw_size+1
+        iny
+        lda fs_cluster_size+1
+        sbc (local_addr),y
+        sta rw_size+2
+        ; If this is zero, advance to the next cluster
+        ora rw_size+0
+        ora rw_size+1
+        bne @set_size
+            ; Get the next cluster number
+            ldy #filedata::current_cluster+0
+            lda (local_addr),y
+            sta cluster+0
             iny
-            ora (local_addr),y
+            lda (local_addr),y
+            sta cluster+1
             iny
-            ora (local_addr),y
-            bne @not_empty
-                ; A == 0
-                ; Create cluster and set its location in cluster_lo and cluster_hi
-                sta cluster+0
-                sta cluster+1
-                sta cluster+2
+            lda (local_addr),y
+            sta cluster+2
+            jsr next_cluster
+            bcc @cluster_ok
+                ; The error is ENOENT if we're at the end of the cluster chain
+                ; of the cluster size
+                cmp #$100-ENOENT
+                beq @add_cluster
+                @io_error_1:
+                    ; Otherwise return error
+                    sta _RISCV_ireg_0+REG_a0
+                    lda #$FF
+                    sta _RISCV_ireg_1+REG_a0
+                    sta _RISCV_ireg_2+REG_a0
+                    sta _RISCV_ireg_3+REG_a0
+                    jmp update_size
+                @add_cluster:
+
+                ; Add a new cluster to the end of the file
                 jsr add_cluster
                 bcs @io_error_1
-                ; Update current_cluster
-                ldy #filedata::cluster_lo+0
-                lda (local_addr),y
-                ldy #filedata::current_cluster+0
-                sta (local_addr),y
-                ldy #filedata::cluster_lo+1
-                lda (local_addr),y
-                ldy #filedata::current_cluster+1
-                sta (local_addr),y
-                ldy #filedata::cluster_hi+0
-                lda (local_addr),y
-                ldy #filedata::current_cluster+2
-                sta (local_addr),y
-                ldy #filedata::cluster_hi+1
-                lda (local_addr),y
-                ldy #filedata::current_cluster+3
-                sta (local_addr),y
-            @not_empty:
-
-            ; We can write at most fs_cluster_size - cluster_ptr bytes
-            sec
+            @cluster_ok:
+            ; Update the position
+            ldy #filedata::current_cluster+0
+            lda cluster+0
+            sta (local_addr),y
+            iny
+            lda cluster+1
+            sta (local_addr),y
+            iny
+            lda cluster+2
+            sta (local_addr),y
+            ldy #filedata::cluster_pos+0
+            ; There's no inc (xx),y; do this the long way
+            clc
+            lda (local_addr),y
+            adc #1
+            sta (local_addr),y
+            iny
+            lda (local_addr),y
+            adc #0
+            sta (local_addr),y
+            iny
+            lda (local_addr),y
+            adc #0
+            sta (local_addr),y
             ldy #filedata::cluster_ptr+0
             lda #0
-            sbc (local_addr),y
-            sta rw_size+0
-            iny
-            lda fs_cluster_size+0
-            sbc (local_addr),y
-            sta rw_size+1
-            iny
-            lda fs_cluster_size+1
-            sbc (local_addr),y
-            sta rw_size+2
-            ; If this is zero, advance to the next cluster
-            ora rw_size+0
-            ora rw_size+1
-            bne @set_size
-                ; Get the next cluster number
-                ldy #filedata::current_cluster+0
-                lda (local_addr),y
-                sta cluster+0
-                iny
-                lda (local_addr),y
-                sta cluster+1
-                iny
-                lda (local_addr),y
-                sta cluster+2
-                jsr next_cluster
-                bcc @cluster_ok
-                    ; The error is ENOENT if we're at the end of the cluster chain
-                    ; of the cluster size
-                    cmp #$100-ENOENT
-                    beq @add_cluster
-                    @io_error_1:
-                        ; Otherwise return error
-                        sta _RISCV_ireg_0+REG_a0
-                        lda #$FF
-                        sta _RISCV_ireg_1+REG_a0
-                        sta _RISCV_ireg_2+REG_a0
-                        sta _RISCV_ireg_3+REG_a0
-                        jmp update_size
-                    @add_cluster:
-
-                    ; Add a new cluster to the end of the file
-                    jsr add_cluster
-                    bcs @io_error_1
-                @cluster_ok:
-                ; Update the position
-                ldy #filedata::current_cluster+0
-                lda cluster+0
-                sta (local_addr),y
-                iny
-                lda cluster+1
-                sta (local_addr),y
-                iny
-                lda cluster+2
-                sta (local_addr),y
-                ldy #filedata::cluster_pos+0
-                ; There's no inc (xx),y; do this the long way
-                clc
-                lda (local_addr),y
-                adc #1
-                sta (local_addr),y
-                iny
-                lda (local_addr),y
-                adc #0
-                sta (local_addr),y
-                iny
-                lda (local_addr),y
-                adc #0
-                sta (local_addr),y
-                ldy #filedata::cluster_ptr+0
-                lda #0
-                sta (local_addr),y
-                iny
-                sta (local_addr),y
-                iny
-                sta (local_addr),y
-                ; Repeat the loop without having written any data
-                jeq @write_loop
-
-            @set_size:
-            ; Use the lesser of the size remaining or the maximum size
-            lda io_size+0
-            cmp rw_size+0
-            lda io_size+1
-            sbc rw_size+1
-            lda io_size+2
-            sbc rw_size+2
-            bcs @do_write
-                lda io_size+0
-                sta rw_size+0
-                lda io_size+1
-                sta rw_size+1
-                lda io_size+2
-                sta rw_size+2
-            @do_write:
-
-            ; Seek to the position to be written:
-            ; Current cluster number
-            ldy #filedata::current_cluster
-            lda (local_addr),y
-            sta seek_location+1
-            iny
-            lda (local_addr),y
-            sta seek_location+2
-            iny
-            lda (local_addr),y
-            ldx fs_cluster_shift
-            beq @end_shift
-            @shift:
-                asl seek_location+1
-                rol seek_location+2
-                rol a
-            dex
-            bne @shift
-            @end_shift:
-            sta seek_location+3
-            ; Add fs_cluster_base
-            clc
-            lda fs_cluster_base+0
-            adc seek_location+1
-            sta seek_location+1
-            lda fs_cluster_base+1
-            adc seek_location+2
-            sta seek_location+2
-            lda fs_cluster_base+2
-            adc seek_location+3
-            sta seek_location+3
-            ; Add cluster_ptr
-            ldy #filedata::cluster_ptr
-            lda (local_addr),y
-            sta seek_location+0
-            iny
-            clc
-            lda (local_addr),y
-            adc seek_location+1
-            sta seek_location+1
-            iny
-            lda (local_addr),y
-            adc seek_location+2
-            sta seek_location+2
-            lda #0
-            adc seek_location+3
-            sta seek_location+3
-            ; Seek
-            jsr do_seek
-            bcc @seek_ok
-            @eio:
-                set_errno EIO
-                jmp update_size
-            @seek_ok:
-
-            ; Transfer directly from REU to volume
-            lda #ULTIDOS_TARGET
-            sta CMD_DATA
-            lda #DOS_CMD_SAVE_REU
-            sta CMD_DATA
-            lda io_addr+0
-            sta CMD_DATA
-            lda io_addr+1
-            sta CMD_DATA
-            lda io_addr+2
-            sta CMD_DATA
-            lda #0
-            sta CMD_DATA
-            lda rw_size+0
-            sta CMD_DATA
-            lda rw_size+1
-            sta CMD_DATA
-            lda rw_size+2
-            sta CMD_DATA
-            lda #0
-            sta CMD_DATA
-            jsr get_cmd_response
-            lda io_xfer+256
-            cmp #'0'
-            bne @eio
-
-            ; Advance file position
-            clc
-            ldy #filedata::cluster_ptr
-            lda rw_size+0
-            adc (local_addr),y
             sta (local_addr),y
             iny
-            lda rw_size+1
-            adc (local_addr),y
             sta (local_addr),y
             iny
-            lda rw_size+2
-            adc (local_addr),y
             sta (local_addr),y
+            ; Repeat the loop without having written any data
+            jeq @write_loop
 
-            ; Advance io_addr
-            clc
-            lda rw_size+0
-            adc io_addr+0
-            sta io_addr+0
-            lda rw_size+1
-            adc io_addr+1
-            sta io_addr+1
-            lda rw_size+2
-            adc io_addr+2
-            sta io_addr+2
-
-            ; Advance io_size
-            sec
-            lda io_size+0
-            sbc rw_size+0
-            sta io_size+0
-            lda io_size+1
-            sbc rw_size+1
-            sta io_size+1
-            lda io_size+2
-            sbc rw_size+2
-            sta io_size+2
-
-        ; Continue until write is complete
-        @end_write_loop:
+        @set_size:
+        ; Use the lesser of the size remaining or the maximum size
         lda io_size+0
-        ora io_size+1
-        ora io_size+2
-        jne @write_loop
-        @end_read:
+        cmp rw_size+0
+        lda io_size+1
+        sbc rw_size+1
+        lda io_size+2
+        sbc rw_size+2
+        bcs @do_write
+            lda io_size+0
+            sta rw_size+0
+            lda io_size+1
+            sta rw_size+1
+            lda io_size+2
+            sta rw_size+2
+        @do_write:
 
-        ; Return the number of bytes written
-        sec
-        lda _RISCV_ireg_0+REG_a2
-        sbc io_size+0
-        sta _RISCV_ireg_0+REG_a0
-        lda _RISCV_ireg_1+REG_a2
-        sbc io_size+1
-        sta _RISCV_ireg_1+REG_a0
-        lda _RISCV_ireg_2+REG_a2
-        sbc io_size+2
-        sta _RISCV_ireg_2+REG_a0
+        ; Seek to the position to be written:
+        ; Current cluster number
+        ldy #filedata::current_cluster
+        lda (local_addr),y
+        sta seek_location+1
+        iny
+        lda (local_addr),y
+        sta seek_location+2
+        iny
+        lda (local_addr),y
+        ldx fs_cluster_shift
+        beq @end_shift
+        @shift:
+            asl seek_location+1
+            rol seek_location+2
+            rol a
+        dex
+        bne @shift
+        @end_shift:
+        sta seek_location+3
+        ; Add fs_cluster_base
+        clc
+        lda fs_cluster_base+0
+        adc seek_location+1
+        sta seek_location+1
+        lda fs_cluster_base+1
+        adc seek_location+2
+        sta seek_location+2
+        lda fs_cluster_base+2
+        adc seek_location+3
+        sta seek_location+3
+        ; Add cluster_ptr
+        ldy #filedata::cluster_ptr
+        lda (local_addr),y
+        sta seek_location+0
+        iny
+        clc
+        lda (local_addr),y
+        adc seek_location+1
+        sta seek_location+1
+        iny
+        lda (local_addr),y
+        adc seek_location+2
+        sta seek_location+2
         lda #0
-        sta _RISCV_ireg_3+REG_a0
-        jmp update_size
+        adc seek_location+3
+        sta seek_location+3
+        ; Seek
+        jsr do_seek
+        bcc @seek_ok
+        @eio:
+            set_errno EIO
+            jmp update_size
+        @seek_ok:
+
+        ; Transfer directly from REU to volume
+        lda #ULTIDOS_TARGET
+        sta CMD_DATA
+        lda #DOS_CMD_SAVE_REU
+        sta CMD_DATA
+        lda io_addr+0
+        sta CMD_DATA
+        lda io_addr+1
+        sta CMD_DATA
+        lda io_addr+2
+        sta CMD_DATA
+        lda #0
+        sta CMD_DATA
+        lda rw_size+0
+        sta CMD_DATA
+        lda rw_size+1
+        sta CMD_DATA
+        lda rw_size+2
+        sta CMD_DATA
+        lda #0
+        sta CMD_DATA
+        jsr get_cmd_response
+        lda io_xfer+256
+        cmp #'0'
+        bne @eio
+
+        ; Advance file position
+        clc
+        ldy #filedata::cluster_ptr
+        lda rw_size+0
+        adc (local_addr),y
+        sta (local_addr),y
+        iny
+        lda rw_size+1
+        adc (local_addr),y
+        sta (local_addr),y
+        iny
+        lda rw_size+2
+        adc (local_addr),y
+        sta (local_addr),y
+
+        ; Advance io_addr
+        clc
+        lda rw_size+0
+        adc io_addr+0
+        sta io_addr+0
+        lda rw_size+1
+        adc io_addr+1
+        sta io_addr+1
+        lda rw_size+2
+        adc io_addr+2
+        sta io_addr+2
+
+        ; Advance io_size
+        sec
+        lda io_size+0
+        sbc rw_size+0
+        sta io_size+0
+        lda io_size+1
+        sbc rw_size+1
+        sta io_size+1
+        lda io_size+2
+        sbc rw_size+2
+        sta io_size+2
+
+    ; Continue until write is complete
+    @end_write_loop:
+    lda io_size+0
+    ora io_size+1
+    ora io_size+2
+    jne @write_loop
+    @end_read:
+
+    ; Return the number of bytes written
+    sec
+    lda _RISCV_ireg_0+REG_a2
+    sbc io_size+0
+    sta _RISCV_ireg_0+REG_a0
+    lda _RISCV_ireg_1+REG_a2
+    sbc io_size+1
+    sta _RISCV_ireg_1+REG_a0
+    lda _RISCV_ireg_2+REG_a2
+    sbc io_size+2
+    sta _RISCV_ireg_2+REG_a0
+    lda #0
+    sta _RISCV_ireg_3+REG_a0
+    jmp update_size
 
 .endproc
 
@@ -1641,6 +1588,28 @@ lseek_location: .res 4
         sta io_xfer-1,x
     dex
     bne clear
+
+    ; Set local_addr
+    jsr set_file_ptr
+    bcc do_file_fstat
+    cmp #$100-ESPIPE
+    beq do_tty_fstat
+        set_errno
+        rts
+    do_file_fstat:
+        ; Handle designates an open file
+        jmp fstat_file
+    do_tty_fstat:
+        ; Handle is one of the special handles
+        jmp fstat_tty
+
+.endproc
+
+; Do fstat on one of the special handles
+; io_addr and io_size are set and checked
+; io_xfer is cleared
+.proc fstat_tty
+
     lda #$FF
     ldx #11
     minus_one:
@@ -1650,73 +1619,38 @@ lseek_location: .res 4
     dex
     bpl minus_one
 
-    ; Check for special file handles 0, 1 and 2
-    lda _RISCV_ireg_1+REG_a0
-    ora _RISCV_ireg_2+REG_a0
-    ora _RISCV_ireg_3+REG_a0
-    bne bad_file
     lda _RISCV_ireg_0+REG_a0
-    bne check_output
+    bne fstat_output
         ; Handle 0 (standard input)
         lda #<%010000100100100  ; Character device, readable
-        sta io_xfer+kernel_stat::st_mode+0
-        lda #>%010000100100100
-        sta io_xfer+kernel_stat::st_mode+1
-        lda #0
-        sta io_xfer+kernel_stat::st_mode+2
-        sta io_xfer+kernel_stat::st_mode+3
-        sta _RISCV_ireg_0+REG_a0
-        sta _RISCV_ireg_1+REG_a0
-        sta _RISCV_ireg_2+REG_a0
-        sta _RISCV_ireg_3+REG_a0
-        jmp write_io_xfer
-    check_output:
-    sec
-    sbc #3
-    bcs check_file
+        ldx #>%010000100100100
+        bne done
+    fstat_output:
         ; Handle 1 (standard output) or 2 (standard error)
         lda #<%010000010010010  ; Character device, writable
-        sta io_xfer+kernel_stat::st_mode+0
-        lda #>%010000010010010
-        sta io_xfer+kernel_stat::st_mode+1
-        lda #0
-        sta io_xfer+kernel_stat::st_mode+2
-        sta io_xfer+kernel_stat::st_mode+3
-        sta _RISCV_ireg_0+REG_a0
-        sta _RISCV_ireg_1+REG_a0
-        sta _RISCV_ireg_2+REG_a0
-        sta _RISCV_ireg_3+REG_a0
-        jmp write_io_xfer
-    check_file:
+        ldx #>%010000010010010
+    done:
+    sta io_xfer+kernel_stat::st_mode+0
+    stx io_xfer+kernel_stat::st_mode+1
+    lda #0
+    sta _RISCV_ireg_0+REG_a0
+    sta _RISCV_ireg_1+REG_a0
+    sta _RISCV_ireg_2+REG_a0
+    sta _RISCV_ireg_3+REG_a0
+    jmp write_io_xfer
 
-        cmp #MAX_FILES
-        bcs bad_file
+.endproc
 
-        ; Set pointer to file data
-        sta file_handle
-        tax
-        lda open_files_lo,x
-        sta local_addr+0
-        lda open_files_hi,x
-        sta local_addr+1
+.proc fstat_file
 
-        ; Check that the file is open
-        ldy #0
-        lda (local_addr),y
-        beq bad_file
-
-        ; Return stat data for the file
-        jsr stat_file
-        lda #0
-        sta _RISCV_ireg_0+REG_a0
-        sta _RISCV_ireg_1+REG_a0
-        sta _RISCV_ireg_2+REG_a0
-        sta _RISCV_ireg_3+REG_a0
-        rts
-
-    bad_file:
-        set_errno EBADF
-        rts
+    ; Return stat data for the file
+    jsr stat_file
+    lda #0
+    sta _RISCV_ireg_0+REG_a0
+    sta _RISCV_ireg_1+REG_a0
+    sta _RISCV_ireg_2+REG_a0
+    sta _RISCV_ireg_3+REG_a0
+    rts
 
 .endproc
 
@@ -1779,14 +1713,6 @@ SYS_lstat = SYS_stat
         sta io_xfer-1,x
     dex
     bne clear
-    lda #$FF
-    ldx #11
-    minus_one:
-        sta io_xfer+kernel_stat::st_atim,x
-        sta io_xfer+kernel_stat::st_ctim,x
-        sta io_xfer+kernel_stat::st_mtim,x
-    dex
-    bpl minus_one
 
     ; Get the stat info on this file
     lda #<file_data
@@ -1806,6 +1732,13 @@ SYS_lstat = SYS_stat
 ; Do stat on the file described in (local_addr)
 ; This always succeeds
 .proc stat_file
+
+    lda #$FF
+    ldx #11
+    minus_one:
+        sta io_xfer+kernel_stat::st_atim,x
+    dex
+    bpl minus_one
 
     ; "Inode number" is the location of the directory entry
     ldy #filedata::dir_entry
@@ -2816,7 +2749,7 @@ error:
 
     ; Find the file
     jsr find_file
-    bcs @find_failed
+    jcs @find_failed
 
     ; The found file must be a directory
     lda file_data+filedata::attributes
@@ -3428,63 +3361,51 @@ dotdot: .res 32
     and _RISCV_ireg_2+REG_a0
     and _RISCV_ireg_3+REG_a0
     cmp #$FF
-    bne @use_dir_handle
+    bne use_dir_handle
     lda _RISCV_ireg_0+REG_a0
     cmp #$100-2
-    bne @use_dir_handle
+    bne use_dir_handle
 
         ; Set the starting directory to the current directory
         jmp start_with_current_dir
 
-    @use_dir_handle:
-
-        ; Must be a valid file handle
-        lda _RISCV_ireg_1+REG_a0
-        ora _RISCV_ireg_2+REG_a0
-        ora _RISCV_ireg_3+REG_a0
-        bne @bad_handle
-        lda _RISCV_ireg_0+REG_a0
-        sec
-        sbc #3
-        cmp #MAX_FILES
-        bcs @bad_handle
-        sta file_handle
-        tax
+    use_dir_handle:
 
         ; Set pointer to file data
-        lda open_files_lo,x
-        sta local_addr+0
-        lda open_files_hi,x
-        sta local_addr+1
+        jsr set_file_ptr
+        bcs bad_handle
 
-        ; Must be open to a directory
-        ldy #0
-        lda (local_addr),y
-        beq @bad_handle
+        ; Must be a directory
         ldy #filedata::attributes
         lda (local_addr),y
         and #ATTR_DIRECTORY
-        beq @bad_handle
+        beq not_directory
 
         ; Copy file path to open_dir
         ldy #filedata::num_components
         lda (local_addr),y
         sta open_dir_num_components
-        beq @end_copy_2
+        beq @end_copy
         ldy #filedata::components
         ldx #0
-        @copy_2:
+        @copy:
             lda (local_addr),y
             sta open_dir,x
         iny
         inx
         cpx open_dir_num_components
-        bcc @copy_2
-        @end_copy_2:
+        bcc @copy
+        @end_copy:
         clc
         rts
 
-    @bad_handle:
+    bad_handle:
+        lda #$100-EBADF
+        sec
+        rts
+
+    not_directory:
+        lda #$100-ENOTDIR
         sec
         rts
 
@@ -4830,57 +4751,6 @@ create_file:
         rts
 
 .endproc
-
-; Check A0 for a valid file handle and set local_addr
-; Return C set and -errno in A if error
-; errno is ESPIPE if the handle is one of the special non-file handles,
-; or EBADF if it does not refer to an open file
-
-.proc set_file_ptr
-
-    ; Only single bytes can be valid
-    lda _RISCV_ireg_1+REG_a0
-    ora _RISCV_ireg_2+REG_a0
-    ora _RISCV_ireg_3+REG_a0
-    bne @bad_handle
-
-    ; Check for handle in range
-    lda _RISCV_ireg_0+REG_a0
-    sec
-    sbc #3
-    bcc @special_handle
-    cmp #MAX_FILES
-    bcs @bad_handle
-
-    ; Set local_addr
-    tax
-    lda open_files_lo,x
-    sta local_addr+0
-    lda open_files_hi,x
-    sta local_addr+1
-
-    ; Return error if the file is not open
-    ldy #0
-    lda (local_addr),y
-    beq @bad_handle
-
-    ; File handle is OK
-    stx file_handle
-    clc
-    rts
-
-@special_handle:
-    lda #$100-ESPIPE
-    sec
-    rts
-
-@bad_handle:
-    lda #$100-EBADF
-    sec
-    rts
-
-.endproc
-
 ; Return C set if the file in file_data is open
 
 .proc is_open
@@ -5220,19 +5090,19 @@ create_file:
         rts
     @path_not_empty:
     cmp #$2F
-    beq @root_dir
+    beq root_dir
     cmp #$5C
-    bne @current_dir
-    @root_dir:
+    bne current_dir
+    root_dir:
         ; Start search from root directory
         lda #0
         sta file_data+filedata::num_components
         jsr set_root_directory
-        jmp @got_dir
-    @current_dir:
+        jmp got_dir
+    current_dir:
         ; Check for current directory being the root
         ldx file_data+filedata::num_components
-        beq @root_dir
+        beq root_dir
         ; Set location of current directory
         lda file_data+filedata::components-4,x
         sta seek_location+0
@@ -5247,17 +5117,18 @@ create_file:
         bcs @io_error
         lda #32
         jsr read_bytes
-        bcc @got_dir
+        bcc @copy_dir
         @io_error:
             lda #$100-EIO
             rts
+        @copy_dir:
         ldx #31
         @copy:
             lda io_xfer,x
             sta file_data,x
         dex
         bpl @copy
-    @got_dir:
+    got_dir:
 
     @path_loop:
         lda file_data+filedata::cluster_lo+0
@@ -6111,6 +5982,56 @@ title_info_sector: .asciiz "fs_info_sector="
 
 .endproc
 .endif
+
+; Check A0 for a valid file handle and set local_addr and file_handle
+; Return C set and -errno in A if error
+; errno is ESPIPE if the handle is one of the special non-file handles,
+; or EBADF if it does not refer to an open file
+
+.proc set_file_ptr
+
+    ; Only single bytes can be valid
+    lda _RISCV_ireg_1+REG_a0
+    ora _RISCV_ireg_2+REG_a0
+    ora _RISCV_ireg_3+REG_a0
+    bne @bad_handle
+
+    ; Check for handle in range
+    lda _RISCV_ireg_0+REG_a0
+    sec
+    sbc #3
+    bcc @special_handle
+    cmp #MAX_FILES
+    bcs @bad_handle
+
+    ; Set local_addr
+    tax
+    lda open_files_lo,x
+    sta local_addr+0
+    lda open_files_hi,x
+    sta local_addr+1
+
+    ; Return error if the file is not open
+    ldy #0
+    lda (local_addr),y
+    beq @bad_handle
+
+    ; File handle is OK
+    stx file_handle
+    clc
+    rts
+
+@special_handle:
+    lda #$100-ESPIPE
+    sec
+    rts
+
+@bad_handle:
+    lda #$100-EBADF
+    sec
+    rts
+
+.endproc
 
 ; Retrieve a path from the REU.
 ; io_addr contains the address. The length is not known in advance, but does
