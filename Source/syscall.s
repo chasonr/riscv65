@@ -781,6 +781,21 @@ lseek_location: .res 4
     jmp @end_read_loop
     @read_loop:
 
+        ; If we're at the end of the cluster, advance to the next cluster
+        jsr advance_file_pos
+        bcc @file_pos_ok
+            ; ENOENT indicates end of file; return other errors
+            cmp #$100-ENOENT
+            beq @eof
+                set_errno
+                rts
+            @eof:
+            jmp @end_read
+        @file_pos_ok:
+
+        ; Determine the read size.
+        ; If we're reading the last cluster, this is cluster_partial - cluster_ptr.
+        ; Otherwise, this is fs_cluster_size - cluster_ptr.
         ; Are we reading from the last cluster?
         ldy #filedata::cluster_count+0
         lda (local_addr),y
@@ -838,69 +853,8 @@ lseek_location: .res 4
             lda fs_cluster_size+1
             sbc (local_addr),y
             sta rw_size+2
-            ; If this is zero, advance to the next cluster
-            ora rw_size+0
-            ora rw_size+1
-            bne @set_size
-                ; Get the next cluster number
-                ldy #filedata::current_cluster+0
-                lda (local_addr),y
-                sta cluster+0
-                iny
-                lda (local_addr),y
-                sta cluster+1
-                iny
-                lda (local_addr),y
-                sta cluster+2
-                jsr next_cluster
-                bcc @cluster_ok
-                    ; Can produce EOF if the file size is an exact multiple
-                    ; of the cluster size
-                    cmp #$100-ENOENT
-                    jeq @end_read
-                    ; Otherwise return error
-                    sta _RISCV_ireg_0+REG_a0
-                    lda #$FF
-                    sta _RISCV_ireg_1+REG_a0
-                    sta _RISCV_ireg_2+REG_a0
-                    sta _RISCV_ireg_3+REG_a0
-                    rts
-                @cluster_ok:
-                ; Update the position
-                ldy #filedata::current_cluster+0
-                lda cluster+0
-                sta (local_addr),y
-                iny
-                lda cluster+1
-                sta (local_addr),y
-                iny
-                lda cluster+2
-                sta (local_addr),y
-                ldy #filedata::cluster_pos+0
-                ; There's no inc (xx),y; do this the long way
-                clc
-                lda (local_addr),y
-                adc #1
-                sta (local_addr),y
-                iny
-                lda (local_addr),y
-                adc #0
-                sta (local_addr),y
-                iny
-                lda (local_addr),y
-                adc #0
-                sta (local_addr),y
-                ldy #filedata::cluster_ptr+0
-                lda #0
-                sta (local_addr),y
-                iny
-                sta (local_addr),y
-                iny
-                sta (local_addr),y
-                ; Repeat the loop without having read any data
-                jeq @read_loop
-
         @set_size:
+
         ; Use the lesser of the size remaining or the maximum size
         lda io_size+0
         cmp rw_size+0
@@ -1157,39 +1111,63 @@ lseek_location: .res 4
     jmp @end_write_loop
     @write_loop:
 
-        ; If current_cluster is 0, the file is empty; get the first cluster
-        ldy #filedata::current_cluster
+        ; If the file is empty, add a cluster
+        ldy #filedata::current_cluster+0
         lda (local_addr),y
         iny
         ora (local_addr),y
         iny
         ora (local_addr),y
-        bne @not_empty
-            ; A == 0
-            ; Create cluster and set its location in cluster_lo and cluster_hi
-            sta cluster+0
-            sta cluster+1
-            sta cluster+2
-            jsr add_cluster
-            bcs @io_error_1
-            ; Update current_cluster
-            ldy #filedata::cluster_lo+0
-            lda (local_addr),y
+        bne @non_empty
+
+            jsr allocate_cluster
+            bcc :+
+                set_errno
+                rts
+            :
             ldy #filedata::current_cluster+0
+            lda cluster+0
             sta (local_addr),y
-            ldy #filedata::cluster_lo+1
+            iny
+            lda cluster+1
+            sta (local_addr),y
+            iny
+            lda cluster+2
+            sta (local_addr),y
+
+        @non_empty:
+
+        ; If we're at the end of the current cluster, advance to the next cluster
+        jsr advance_file_pos
+        bcc @cluster_ok
+
+            ; ENOENT indicates end of cluster chain; we need a new cluster
+            ; Return other errors
+            cmp #$100-ENOENT
+            beq @new_cluster
+            @io_error:
+                set_errno
+                rts
+            @new_cluster:
+
+            ; Add a new cluster to the cluster chain
+            ldy #filedata::current_cluster
             lda (local_addr),y
-            ldy #filedata::current_cluster+1
-            sta (local_addr),y
-            ldy #filedata::cluster_hi+0
+            sta cluster+0
+            iny
             lda (local_addr),y
-            ldy #filedata::current_cluster+2
-            sta (local_addr),y
-            ldy #filedata::cluster_hi+1
+            sta cluster+1
+            iny
             lda (local_addr),y
-            ldy #filedata::current_cluster+3
-            sta (local_addr),y
-        @not_empty:
+            sta cluster+2
+            lda #0
+            sta cluster+3
+            jsr allocate_cluster
+            bcs @io_error
+            jsr advance_file_pos
+            bcs @io_error
+
+        @cluster_ok:
 
         ; We can write at most fs_cluster_size - cluster_ptr bytes
         sec
@@ -1205,75 +1183,7 @@ lseek_location: .res 4
         lda fs_cluster_size+1
         sbc (local_addr),y
         sta rw_size+2
-        ; If this is zero, advance to the next cluster
-        ora rw_size+0
-        ora rw_size+1
-        bne @set_size
-            ; Get the next cluster number
-            ldy #filedata::current_cluster+0
-            lda (local_addr),y
-            sta cluster+0
-            iny
-            lda (local_addr),y
-            sta cluster+1
-            iny
-            lda (local_addr),y
-            sta cluster+2
-            jsr next_cluster
-            bcc @cluster_ok
-                ; The error is ENOENT if we're at the end of the cluster chain
-                ; of the cluster size
-                cmp #$100-ENOENT
-                beq @add_cluster
-                @io_error_1:
-                    ; Otherwise return error
-                    sta _RISCV_ireg_0+REG_a0
-                    lda #$FF
-                    sta _RISCV_ireg_1+REG_a0
-                    sta _RISCV_ireg_2+REG_a0
-                    sta _RISCV_ireg_3+REG_a0
-                    jmp update_size
-                @add_cluster:
 
-                ; Add a new cluster to the end of the file
-                jsr add_cluster
-                bcs @io_error_1
-            @cluster_ok:
-            ; Update the position
-            ldy #filedata::current_cluster+0
-            lda cluster+0
-            sta (local_addr),y
-            iny
-            lda cluster+1
-            sta (local_addr),y
-            iny
-            lda cluster+2
-            sta (local_addr),y
-            ldy #filedata::cluster_pos+0
-            ; There's no inc (xx),y; do this the long way
-            clc
-            lda (local_addr),y
-            adc #1
-            sta (local_addr),y
-            iny
-            lda (local_addr),y
-            adc #0
-            sta (local_addr),y
-            iny
-            lda (local_addr),y
-            adc #0
-            sta (local_addr),y
-            ldy #filedata::cluster_ptr+0
-            lda #0
-            sta (local_addr),y
-            iny
-            sta (local_addr),y
-            iny
-            sta (local_addr),y
-            ; Repeat the loop without having written any data
-            jeq @write_loop
-
-        @set_size:
         ; Use the lesser of the size remaining or the maximum size
         lda io_size+0
         cmp rw_size+0
@@ -1471,84 +1381,6 @@ lseek_location: .res 4
         sta (local_addr),y
 
     @size_ok:
-    rts
-
-.endproc
-
-; Add a cluster at the end of the file whose data block is at local_addr
-; "cluster" returns the index of the current cluster
-; On error, C is set and the error is in A
-.proc add_cluster
-
-    ; Find the last cluster in the file
-    ; TODO: need to cache this to avoid quadratic time complexity
-
-    lda #0
-    sta cluster+0 ; Initial cluster == 0 to mean link from the directory entry
-    sta cluster+1
-    sta cluster+2
-    sta cluster+3
-    ; Is the file empty?
-    ldy #filedata::cluster_lo+0
-    lda (local_addr),y
-    ldy #filedata::cluster_lo+1
-    ora (local_addr),y
-    ldy #filedata::cluster_hi+0
-    ora (local_addr),y
-    ldy #filedata::cluster_hi+1
-    ora (local_addr),y
-    beq @new_cluster
-        ; Follow the cluster chain:
-        ; Set first cluster index
-        ldy #filedata::cluster_lo+0
-        lda (local_addr),y
-        sta cluster+0
-        iny
-        lda (local_addr),y
-        sta cluster+1
-        ldy #filedata::cluster_hi+0
-        lda (local_addr),y
-        sta cluster+2
-        iny
-        lda (local_addr),y
-        sta cluster+3
-
-        ; Scan until we find no more clusters
-        @find_last_loop:
-            ; Save current cluster number
-            lda cluster+0
-            sta last_cluster+0
-            lda cluster+1
-            sta last_cluster+1
-            lda cluster+2
-            sta last_cluster+2
-            ; Get the next cluster number
-            jsr next_cluster
-            ; Continue searching if we got a cluster number
-            bcc @find_last_loop
-            ; A indicates ENOENT if end of chain; this exits the loop
-            cmp #$100-ENOENT
-            beq @end_find_last_loop
-            ; Otherwise return error
-            @io_error_1:
-                sec
-                rts
-        @end_find_last_loop:
-        ; last_cluster contains the last cluster number of the file
-        lda last_cluster+0
-        sta cluster+0
-        lda last_cluster+1
-        sta cluster+1
-        lda last_cluster+2
-        sta cluster+2
-        lda #0
-        sta cluster+3
-
-    @new_cluster:
-    ; Allocate new cluster
-    jsr allocate_cluster
-    bcs @io_error_1
-
     rts
 
 .endproc
@@ -4420,7 +4252,18 @@ create_file:
     read_cluster_chain:
         ; Repeat until valid entry or end of file
 
-        @cluster_loop:
+        @read_loop:
+            ; Advance to next cluster if we're at the end of the cluster
+            jsr advance_file_pos
+            bcc @pos_ok
+                ; ENOENT indicates end of chain
+                cmp #$100-ENOENT
+                beq @end_dir
+                    jmp io_error
+                @end_dir:
+                    jmp end_of_directory
+            @pos_ok:
+
             ; Seek to current position
             ldy #filedata::current_cluster+0
             lda (local_addr),y
@@ -4468,114 +4311,40 @@ create_file:
             jsr do_seek
             jcs io_error
 
-            @read_loop:
-                ; Check for end of cluster
-                ldy #filedata::cluster_ptr+1
-                lda (local_addr),y
-                cmp fs_cluster_size+0
-                lda (local_addr),y
-                sbc fs_cluster_size+1
-                bcc @cluster_ok
-                    ldy #filedata::current_cluster+0
-                    lda (local_addr),y
-                    sta cluster+0
-                    iny
-                    lda (local_addr),y
-                    sta cluster+1
-                    iny
-                    lda (local_addr),y
-                    sta cluster+2
-                    lda #0
-                    sta cluster+3
-                    jsr next_cluster
-                    bcc @got_cluster
-                        ; ENOENT means end of cluster chain; report as end of
-                        ; directory rather than error
-                        cmp #$100-ENOENT
-                        beq @end_dir
-                            jmp error
-                        @end_dir:
-                            jmp end_of_directory
-                    @got_cluster:
-                    ldy #filedata::current_cluster+0
-                    lda cluster+0
-                    sta (local_addr),y
-                    iny
-                    lda cluster+1
-                    sta (local_addr),y
-                    iny
-                    lda cluster+2
-                    sta (local_addr),y
-                    ldy #filedata::cluster_pos+0
-                    clc
-                    lda (local_addr),y
-                    adc #1
-                    sta (local_addr),y
-                    iny
-                    lda (local_addr),y
-                    adc #0
-                    sta (local_addr),y
-                    iny
-                    lda (local_addr),y
-                    adc #0
-                    sta (local_addr),y
-                    lda #0
-                    ldy #filedata::cluster_ptr+0
-                    sta (local_addr),y
-                    iny
-                    sta (local_addr),y
-                    iny
-                    sta (local_addr),y
-                    jmp @cluster_loop
-                @cluster_ok:
+            ; Read an entry
+            lda #32
+            jsr read_bytes
+            jcs io_error
 
-                ; Read an entry
-                lda #32
-                jsr read_bytes
-                jcs io_error
+            ; Advance the current location
+            clc
+            ldy #filedata::cluster_ptr+0
+            lda (local_addr),y
+            adc #32
+            sta (local_addr),y
+            iny
+            lda (local_addr),y
+            adc #0
+            sta (local_addr),y
+            iny
+            lda (local_addr),y
+            adc #0
+            sta (local_addr),y
 
-                ; Advance the current location
-                clc
-                ldy #filedata::cluster_ptr+0
-                lda (local_addr),y
-                adc #32
-                sta (local_addr),y
-                iny
-                lda (local_addr),y
-                adc #0
-                sta (local_addr),y
-                iny
-                lda (local_addr),y
-                adc #0
-                sta (local_addr),y
-                clc
-                lda seek_location+0
-                adc #32
-                sta seek_location+0
-                lda seek_location+1
-                adc #0
-                sta seek_location+1
-                lda seek_location+2
-                adc #0
-                sta seek_location+2
-                lda seek_location+3
-                adc #0
-                sta seek_location+3
+            ; Check for end of directory
+            lda io_xfer+0
+            jeq end_of_directory
 
-                ; Check for end of directory
-                lda io_xfer+0
-                jeq end_of_directory
+            ; Check for deleted entry
+            cmp #$E5
+            beq @end_read_loop
 
-                ; Check for deleted entry
-                cmp #$E5
-                beq @end_read_loop
-
-                ; Check for volume label or LFN record
-                lda io_addr+filedata::attributes
-                and #ATTR_VOLUME
-                beq return_dir_entry
-            @end_read_loop:
-            jmp @read_loop
+            ; Check for volume label or LFN record
+            lda io_addr+filedata::attributes
+            and #ATTR_VOLUME
+            beq return_dir_entry
+        @end_read_loop:
+        jmp @read_loop
 
     return_dir_entry:
         ; The just-read entry is in io_xfer. We'll want to build the return
@@ -4783,7 +4552,7 @@ create_file:
 
 .endproc
 
-; Delete the directory entry loaded in file_path
+; Delete the directory entry loaded in file_data
 ; Return C set if error, and -errno in A
 
 .proc delete_dir_entry
@@ -4843,35 +4612,11 @@ create_file:
 
         @delete_loop:
             ; If cluster_ptr >= fs_cluster_size, go to next cluster
-            lda file_data+filedata::cluster_ptr+1
-            cmp fs_cluster_size+0
-            lda file_data+filedata::cluster_ptr+2
-            sbc fs_cluster_size+1
-            bcc @cluster_ok
-                lda file_data+filedata::current_cluster+0
-                sta cluster+0
-                lda file_data+filedata::current_cluster+1
-                sta cluster+1
-                lda file_data+filedata::current_cluster+2
-                sta cluster+2
-                lda #0
-                sta cluster+3
-                jsr next_cluster
-                bcc :+
-                    set_errno
-                    rts
-                :
-                lda cluster+0
-                sta file_data+filedata::current_cluster+0
-                lda cluster+1
-                sta file_data+filedata::current_cluster+1
-                lda cluster+2
-                sta file_data+filedata::current_cluster+2
-                lda #0
-                sta file_data+filedata::cluster_ptr+0
-                sta file_data+filedata::cluster_ptr+1
-                sta file_data+filedata::cluster_ptr+2
-            @cluster_ok:
+            jsr advance_file_pos
+            bcc :+
+                set_errno
+                rts
+            :
             ; Set the seek position:
             ; Shift cluster number to byte count
             lda file_data+filedata::cluster_pos+0
@@ -6010,6 +5755,82 @@ title_info_sector: .asciiz "fs_info_sector="
 
 @bad_handle:
     lda #$100-EBADF
+    sec
+    rts
+
+.endproc
+
+; For file described at (local_addr):
+; * Compare cluster_ptr to the cluster size
+; * If we are at the end of the cluster, advance to the next cluster
+; Return C clear if OK. If error, C is set and -errno is in A.
+; ENOENT indicates that the end of the cluster chain was reached.
+
+.proc advance_file_pos
+
+    ; Have we reached the end of the cluster?
+    ldy #filedata::cluster_ptr+1
+    lda (local_addr),y
+    cmp fs_cluster_size+0
+    iny
+    lda (local_addr),y
+    sbc fs_cluster_size+1
+    bcc pos_ok
+
+    ; We have. Advance to the next cluster.
+    ldy #filedata::current_cluster+0
+    lda (local_addr),y
+    sta cluster+0
+    iny
+    lda (local_addr),y
+    sta cluster+1
+    iny
+    lda (local_addr),y
+    sta cluster+2
+    lda #0
+    sta cluster+3
+    jsr next_cluster
+    bcs error
+    ldy #filedata::current_cluster+0
+    lda cluster+0
+    sta (local_addr),y
+    iny
+    lda cluster+1
+    sta (local_addr),y
+    iny
+    lda cluster+2
+    sta (local_addr),y
+
+    ; Advance cluster_pos
+    ; There is no inc (local_addr),y, so use adc
+    ldy #filedata::cluster_pos+0
+    clc
+    lda (local_addr),y
+    adc #1
+    sta (local_addr),y
+    iny
+    lda (local_addr),y
+    adc #0
+    sta (local_addr),y
+    iny
+    lda (local_addr),y
+    adc #0
+    sta (local_addr),y
+
+    ; Reset cluster_ptr
+    ldy #filedata::cluster_ptr+0
+    lda #0
+    sta (local_addr),y
+    iny
+    sta (local_addr),y
+    iny
+    sta (local_addr),y
+
+pos_ok:
+    clc
+    rts
+
+error:
     sec
     rts
 

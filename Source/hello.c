@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <dirent.h>
@@ -17,6 +18,31 @@ main(void)
     time_t tv1;
     time(&tv1);
     printf("time=%s\n", asctime(gmtime(&tv1)));
+
+    unsigned long size = 0;
+    FILE *fp = fopen("/dir.1/dir.2/test.txt", "r");
+    if (fp == NULL) {
+        perror("test.txt");
+        return EXIT_FAILURE;
+    }
+
+    while (1) {
+        char buf[4096];
+        size_t s = fread(buf, 1, sizeof(buf), fp);
+        if (s == 0) {
+            break;
+        }
+        fwrite(buf, 1, s, stdout);
+        size += s;
+    }
+    printf("size=%lu\n", size);
+    if (ferror(fp)) {
+        perror("test.txt");
+        fclose(fp);
+        return EXIT_FAILURE;
+    }
+    fclose(fp);
+    return EXIT_SUCCESS;
 
 #if 0
     DIR *dirp = opendir("/dir.1");
@@ -56,8 +82,8 @@ main(void)
     printf("input string is \"%s\"", str);
 #endif
 
-    static const char path[] = "/dir.1/dir.2/test.txt";
 #if 0
+    static const char path[] = "/dir.1/dir.2/test.txt";
     errno = 0;
     int rc = unlink(path);
     printf("unlink returns: %d errno=%d\n", rc, errno);
@@ -72,7 +98,7 @@ main(void)
         printf("unlink returns: %d errno=%d\n", rc, errno);
     }
 #endif
-#if 1
+#if 0
     errno = 0;
     int rc = chdir("/dir.1");
     printf("chdir returns: %d errno=%d\n", rc, errno);
@@ -81,17 +107,17 @@ main(void)
     printf("chdir returns: %d errno=%d\n", rc, errno);
 #endif
 
-#if 1
+#if 0
     int fddir = open("/dir.1/dir.2", O_RDONLY|O_DIRECTORY, 0);
     int fd = _openat(fddir, "test.txt", O_RDONLY, 0);
     printf("len=%u open returns: %d\n", (unsigned)strlen(path), fd);
 #endif
-#if 1
+#if 0
     struct stat st;
     rc = fstat(fd, &st);
     printf("fstat returns %d\n", rc);
 #endif
-#if 1
+#if 0
     printf("st_dev = %ld\n", (long)st.st_dev);
     printf("sizeof(st_ino) = %lu\n", (unsigned long)sizeof(st.st_ino));
     printf("st_ino = %ld\n", (long)st.st_ino);
@@ -107,7 +133,7 @@ main(void)
     printf("st_ctim = %ld\n", (long)st.st_ctim.tv_sec);
     printf("st_mtim = %ld\n", (long)st.st_mtim.tv_sec);
 #endif
-#if 1
+#if 0
     close(fd);
 #endif
 
