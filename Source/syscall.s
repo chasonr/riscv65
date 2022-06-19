@@ -3316,24 +3316,6 @@ dotdot: .res 32
 .code
 
 .endproc
-;000328a0: 4449 5220 2020 2020 3120 2010 0064 1c18  DIR     1  ..d..
-;000328b0: 8553 8553 0000 1c18 8553 ae01 0000 0000  .S.S.....S......
-;0010c800: 2e20 2020 2020 2020 2020 2010 0032 1b18  .          ..2..
-;0010c810: 8553 8553 0000 1b18 8553 ae01 0000 0000  .S.S.....S......
-;0010c820: 2e2e 2020 2020 2020 2020 2010 0032 1b18  ..         ..2..
-;0010c830: 8553 8553 0000 1b18 8553 0000 0000 0000  .S.S.....S......
-;   name       .byte 11 "DIR     1  " | ".          " | "..         "
-;   attributes .byte  1 10            | 10            | 10
-;   case_flags .byte  1 00            | 00            | 00
-;   ctime_lo   .byte  1 64            | 32            | 32
-;   ctime      .word  1 1c18          | 1b18          | 1b18
-;   cdate      .word  1 8553          | 8553          | 8553
-;   reserved   .word  1 8553          | 8553          | 8553
-;   cluster_hi .word  1 0000          | 0000          | 0000
-;   mtime      .word  1 1c18          | 1b18          | 1b18
-;   mdate      .word  1 8553          | 8553          | 8553
-;   cluster_lo .word  1 ae01          | ae01          | 0000
-;   size       .dword 1 0000 0000     | 0000 0000     | 0000 0000
 
 ; Set the current directory into open_dir
 .proc start_with_current_dir
