@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -17,6 +18,18 @@ main(void)
     time(&tv1);
     printf("time=%s\n", asctime(gmtime(&tv1)));
 
+    DIR *dirp = opendir("/dir.1");
+    printf("opendir returns %p\n", dirp);
+    printf("sizeof(off_t) = %u\n", (unsigned)sizeof(off_t));
+
+    struct dirent *e;
+    while ((e = readdir(dirp)) != NULL) {
+        printf("d_off=%08lX name=\"%s\"\n", e->d_off, e->d_name);
+    }
+
+    closedir(dirp);
+
+#if 0
     errno = 0;
     int rc = mkdir("/dirtest.1", 0755);
     printf("mkdir returns %d errno=%d\n", rc, errno);
@@ -26,6 +39,7 @@ main(void)
     printf("rmdir returns %d errno=%d\n", rc, errno); // should fail
     rc = rmdir("/dirtest.1/dirtest.2");
     printf("rmdir returns %d errno=%d\n", rc, errno);
+#endif
 
 #if 0
     char str[256];

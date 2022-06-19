@@ -1668,7 +1668,7 @@ SYS_exit = _RISCV_exit
 
 .import SYS_getcwd
 .import SYS_chdir
-SYS_getdents = bad_ecall
+.import SYS_getdents
 .import SYS_mkdir
 .import SYS_rmdir
 SYS_remove   = bad_ecall
