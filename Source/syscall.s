@@ -871,60 +871,12 @@ lseek_location: .res 4
             sta rw_size+2
         @do_read:
 
-        ; Seek to the position to be read:
-        ; Current cluster number
-        ldy #filedata::current_cluster
-        lda (local_addr),y
-        sta seek_location+1
-        iny
-        lda (local_addr),y
-        sta seek_location+2
-        iny
-        lda (local_addr),y
-        ldx fs_cluster_shift
-        beq @end_shift
-        @shift:
-            asl seek_location+1
-            rol seek_location+2
-            rol a
-        dex
-        bne @shift
-        @end_shift:
-        sta seek_location+3
-        ; Add fs_cluster_base
-        clc
-        lda fs_cluster_base+0
-        adc seek_location+1
-        sta seek_location+1
-        lda fs_cluster_base+1
-        adc seek_location+2
-        sta seek_location+2
-        lda fs_cluster_base+2
-        adc seek_location+3
-        sta seek_location+3
-        ; Add cluster_ptr
-        ldy #filedata::cluster_ptr
-        lda (local_addr),y
-        sta seek_location+0
-        iny
-        clc
-        lda (local_addr),y
-        adc seek_location+1
-        sta seek_location+1
-        iny
-        lda (local_addr),y
-        adc seek_location+2
-        sta seek_location+2
-        lda #0
-        adc seek_location+3
-        sta seek_location+3
-        ; Seek
-        jsr do_seek
-        bcc @seek_ok
-        @eio:
-            set_errno EIO
+        ; Seek to the position to be read
+        jsr seek_to_position
+        bcc :+
+            set_errno
             rts
-        @seek_ok:
+        :
 
         ; Transfer directly from volume to REU
         lda #ULTIDOS_TARGET
@@ -950,7 +902,10 @@ lseek_location: .res 4
         jsr get_cmd_response
         lda io_xfer+256
         cmp #'0'
-        bne @eio
+        beq :+
+            set_errno EIO
+            rts
+        :
 
         ; Advance file position
         clc
@@ -1120,6 +1075,11 @@ lseek_location: .res 4
         ora (local_addr),y
         bne @non_empty
 
+            lda #0
+            sta cluster+0
+            sta cluster+1
+            sta cluster+2
+            sta cluster+3
             jsr allocate_cluster
             bcc :+
                 set_errno
@@ -1200,60 +1160,12 @@ lseek_location: .res 4
             sta rw_size+2
         @do_write:
 
-        ; Seek to the position to be written:
-        ; Current cluster number
-        ldy #filedata::current_cluster
-        lda (local_addr),y
-        sta seek_location+1
-        iny
-        lda (local_addr),y
-        sta seek_location+2
-        iny
-        lda (local_addr),y
-        ldx fs_cluster_shift
-        beq @end_shift
-        @shift:
-            asl seek_location+1
-            rol seek_location+2
-            rol a
-        dex
-        bne @shift
-        @end_shift:
-        sta seek_location+3
-        ; Add fs_cluster_base
-        clc
-        lda fs_cluster_base+0
-        adc seek_location+1
-        sta seek_location+1
-        lda fs_cluster_base+1
-        adc seek_location+2
-        sta seek_location+2
-        lda fs_cluster_base+2
-        adc seek_location+3
-        sta seek_location+3
-        ; Add cluster_ptr
-        ldy #filedata::cluster_ptr
-        lda (local_addr),y
-        sta seek_location+0
-        iny
-        clc
-        lda (local_addr),y
-        adc seek_location+1
-        sta seek_location+1
-        iny
-        lda (local_addr),y
-        adc seek_location+2
-        sta seek_location+2
-        lda #0
-        adc seek_location+3
-        sta seek_location+3
-        ; Seek
-        jsr do_seek
-        bcc @seek_ok
-        @eio:
-            set_errno EIO
+        ; Seek to the position to be written
+        jsr seek_to_position
+        bcc :+
+            set_errno
             jmp update_size
-        @seek_ok:
+        :
 
         ; Transfer directly from REU to volume
         lda #ULTIDOS_TARGET
@@ -1279,7 +1191,10 @@ lseek_location: .res 4
         jsr get_cmd_response
         lda io_xfer+256
         cmp #'0'
-        bne @eio
+        beq :+
+            set_errno EIO
+            jmp update_size
+        :
 
         ; Advance file position
         clc
@@ -3071,36 +2986,19 @@ open_mode: .res 1
     :
 
     ; Seek to the cluster location
-    lda #0
-    sta seek_location+0
     lda file_data+filedata::cluster_lo+0
-    sta seek_location+1
+    sta file_data+filedata::current_cluster+0
     lda file_data+filedata::cluster_lo+1
-    sta seek_location+2
+    sta file_data+filedata::current_cluster+1
     lda file_data+filedata::cluster_hi+0
-    ldx fs_cluster_shift
-    beq @end_lshift
-    @lshift:
-        asl seek_location+0
-        rol seek_location+1
-        rol a
-    dex
-    bne @lshift
-    @end_lshift:
-    sta seek_location+3
-    clc
-    lda seek_location+1
-    adc fs_cluster_base+0
-    sta seek_location+1
-    lda seek_location+2
-    adc fs_cluster_base+1
-    sta seek_location+2
-    lda seek_location+3
-    adc fs_cluster_base+2
-    sta seek_location+3
-    jsr do_seek
+    sta file_data+filedata::current_cluster+2
+    lda #0
+    sta file_data+filedata::cluster_ptr+0
+    sta file_data+filedata::cluster_ptr+1
+    sta file_data+filedata::cluster_ptr+2
+    jsr seek_to_position
     bcc :+
-        lda #$100-EIO
+        set_errno
         rts
     :
 
@@ -3131,7 +3029,8 @@ open_mode: .res 1
     bne @write_zeros
     jsr end_write
     bcc :+
-        lda #$100-EIO
+        set_errno EIO
+        rts
     :
     ; End here
     lda #0
@@ -3961,69 +3860,36 @@ create_file:
             rts
     not_root:
 
-    ; Set cluster_pos
+    ; Set current_cluster
     lda file_data+filedata::cluster_lo+0
-    sta file_data+filedata::cluster_pos+0
+    sta file_data+filedata::current_cluster+0
     lda file_data+filedata::cluster_lo+1
-    sta file_data+filedata::cluster_pos+1
+    sta file_data+filedata::current_cluster+1
     lda file_data+filedata::cluster_hi+0
-    sta file_data+filedata::cluster_pos+2
+    sta file_data+filedata::current_cluster+2
     ; Check for presence of cluster chain
-    ora file_data+filedata::cluster_pos+0
-    ora file_data+filedata::cluster_pos+1
+    ora file_data+filedata::current_cluster+0
+    ora file_data+filedata::current_cluster+1
     bne :+
         ; No cluster chain; directory is empty
         clc
         rts
     :
-    ; Set cluster_ptr
-    lda #0
-    sta file_data+filedata::cluster_ptr+0
-    sta file_data+filedata::cluster_ptr+1
-    sta file_data+filedata::cluster_ptr+2
+
+    ; Set local_addr for routines that need it
+    lda #<file_data
+    sta local_addr+0
+    lda #>file_data
+    sta local_addr+1
 
     cluster_loop:
-        ; Set seek_location:
-        ; Start with shifted cluster position
-        lda file_data+filedata::cluster_pos+0
-        sta seek_location+1
-        lda file_data+filedata::cluster_pos+1
-        sta seek_location+2
-        lda file_data+filedata::cluster_pos+2
-        ldx fs_cluster_shift
-        beq @end_lshift
-        @lshift:
-            asl seek_location+1
-            rol seek_location+2
-            rol a
-        dex
-        bne @lshift
-        @end_lshift:
-        sta seek_location+3
-        ; Add fs_cluster_base
-        clc
-        lda seek_location+1
-        adc fs_cluster_base+0
-        sta seek_location+1
-        lda seek_location+2
-        adc fs_cluster_base+1
-        sta seek_location+2
-        lda seek_location+3
-        adc fs_cluster_base+2
-        sta seek_location+3
-
-        ; Set cluster_ptr
+        ; Set seek_location
         lda #0
-        sta seek_location+0
         sta file_data+filedata::cluster_ptr+0
         sta file_data+filedata::cluster_ptr+1
         sta file_data+filedata::cluster_ptr+2
-
-        ; Seek to seek_location
-        jsr do_seek
+        jsr seek_to_position
         bcc :+
-        io_error:
-            lda #$100-EIO
             rts
         :
 
@@ -4032,7 +3898,10 @@ create_file:
             ; Read the directory entry
             lda #32
             jsr read_bytes
-            bcs io_error
+            bcc :+
+                lda #$100-EIO
+                rts
+            :
 
             ; 0 at start marks end of directory; exit early
             lda io_xfer+0
@@ -4044,11 +3913,6 @@ create_file:
             ; $E5 indicates a deleted entry
             cmp #$E5
             beq end_dir_loop
-
-            ; Disregard a volume label
-            lda io_xfer+filedata::attributes
-            and #ATTR_VOLUME
-            bne end_dir_loop
 
             ; Disregard the . and .. entries
             cmp #'.'
@@ -4067,6 +3931,11 @@ create_file:
             dex
             bpl @check_spaces
             bmi end_dir_loop ; A . or .. entry
+
+            ; Disregard a volume label
+            lda io_xfer+filedata::attributes
+            and #ATTR_VOLUME
+            bne end_dir_loop
 
             not_empty:
                 lda #$100-ENOTEMPTY
@@ -4089,7 +3958,7 @@ create_file:
         lda file_data+filedata::cluster_ptr+1
         cmp fs_cluster_size+0
         lda file_data+filedata::cluster_ptr+2
-        cmp fs_cluster_size+1
+        sbc fs_cluster_size+1
         bcc dir_loop
 
     ; Advance to next cluster
@@ -4208,19 +4077,6 @@ create_file:
             lda (local_addr),y
             adc #0
             sta (local_addr),y
-            clc
-            lda seek_location+0
-            adc #32
-            sta seek_location+0
-            lda seek_location+1
-            adc #0
-            sta seek_location+1
-            lda seek_location+2
-            adc #0
-            sta seek_location+2
-            lda seek_location+3
-            adc #0
-            sta seek_location+3
 
             ; Check for end of directory
             lda io_xfer+0
@@ -4259,57 +4115,17 @@ create_file:
                 ; ENOENT indicates end of chain
                 cmp #$100-ENOENT
                 beq @end_dir
-                    jmp io_error
+                    jmp error
                 @end_dir:
                     jmp end_of_directory
             @pos_ok:
 
             ; Seek to current position
-            ldy #filedata::current_cluster+0
-            lda (local_addr),y
-            sta seek_location+1
-            iny
-            lda (local_addr),y
-            sta seek_location+2
-            iny
-            lda (local_addr),y
-            ldx fs_cluster_shift
-            beq @end_lshift
-            @lshift:
-                asl seek_location+1
-                rol seek_location+2
-                rol a
-            dex
-            bne @lshift
-            @end_lshift:
-            sta seek_location+3
-            clc
-            lda seek_location+1
-            adc fs_cluster_base+0
-            sta seek_location+1
-            lda seek_location+2
-            adc fs_cluster_base+1
-            sta seek_location+2
-            lda seek_location+3
-            adc fs_cluster_base+2
-            sta seek_location+3
-            ldy #filedata::cluster_ptr+0
-            lda (local_addr),y
-            sta seek_location+0
-            clc
-            iny
-            lda (local_addr),y
-            adc seek_location+1
-            sta seek_location+1
-            iny
-            lda (local_addr),y
-            adc seek_location+2
-            sta seek_location+2
-            lda #0
-            adc seek_location+3
-            sta seek_location+3
-            jsr do_seek
-            jcs io_error
+            jsr seek_to_position
+            bcc :+
+                set_errno
+                rts
+            :
 
             ; Read an entry
             lda #32
@@ -4560,17 +4376,22 @@ create_file:
     ; Delete LFN entries starting with lfn_entry and continue through
     ; dir_entry (which is the short name entry).
     ; Then delete dir_entry as well.
-    ; Use cluster_pos and cluster_ptr to traverse the cluster chain.
+    ; Use current_cluster and cluster_ptr to traverse the cluster chain.
+
+    lda #<file_data
+    sta local_addr+0
+    lda #>file_data
+    sta local_addr+1
 
     ; Convert lfn_entry to cluster and position:
     ; Determine the cluster number
     sec
     lda file_data+filedata::lfn_entry+1
     sbc fs_cluster_base+0
-    sta file_data+filedata::cluster_pos+0
+    sta file_data+filedata::current_cluster+0
     lda file_data+filedata::lfn_entry+2
     sbc fs_cluster_base+1
-    sta file_data+filedata::cluster_pos+1
+    sta file_data+filedata::current_cluster+1
     lda file_data+filedata::lfn_entry+3
     sbc fs_cluster_base+2
     ; If cluster < 2, we're deleting from the root directory of FAT12 or FAT16
@@ -4579,18 +4400,18 @@ create_file:
     beq @end_rshift
     @rshift:
         lsr a
-        ror file_data+filedata::cluster_pos+1
-        ror file_data+filedata::cluster_pos+0
+        ror file_data+filedata::current_cluster+1
+        ror file_data+filedata::current_cluster+0
     dex
     bne @rshift
     @end_rshift:
-    sta file_data+filedata::cluster_pos+2
+    sta file_data+filedata::current_cluster+2
     ; If cluster < 2, we're deleting from the root directory of FAT12 or FAT16
-    lda file_data+filedata::cluster_pos+0
+    lda file_data+filedata::current_cluster+0
     cmp #2
-    lda file_data+filedata::cluster_pos+1
+    lda file_data+filedata::current_cluster+1
     sbc #0
-    lda file_data+filedata::cluster_pos+2
+    lda file_data+filedata::current_cluster+2
     sbc #0
     bcs :+
     @go_delete_from_root:
@@ -4612,65 +4433,28 @@ create_file:
 
         @delete_loop:
             ; If cluster_ptr >= fs_cluster_size, go to next cluster
+            lda #<file_data
+            sta local_addr+0
+            lda #>file_data
+            sta local_addr+1
             jsr advance_file_pos
             bcc :+
-                set_errno
+            @error:
                 rts
             :
-            ; Set the seek position:
-            ; Shift cluster number to byte count
-            lda file_data+filedata::cluster_pos+0
-            sta seek_location+1
-            lda file_data+filedata::cluster_pos+1
-            sta seek_location+2
-            lda file_data+filedata::cluster_pos+2
-            ldx fs_cluster_shift
-            beq @end_lshift
-            @lshift:
-                asl seek_location+1
-                rol seek_location+2
-                rol a
-            dex
-            bne @lshift
-            @end_lshift:
-            sta seek_location+3
-            ; Add the cluster base
-            clc
-            lda seek_location+1
-            adc fs_cluster_base+0
-            sta seek_location+1
-            lda seek_location+2
-            adc fs_cluster_base+1
-            sta seek_location+2
-            lda seek_location+3
-            adc fs_cluster_base+2
-            sta seek_location+3
-            ; Add the cluster offset
-            lda file_data+filedata::cluster_ptr+0
-            sta seek_location+0
-            clc
-            lda seek_location+1
-            adc file_data+filedata::cluster_ptr+1
-            sta seek_location+1
-            lda seek_location+2
-            adc file_data+filedata::cluster_ptr+2
-            sta seek_location+2
-            lda seek_location+3
-            adc #0
-            sta seek_location+3
-            ; Seek to the entry
-            jsr do_seek
-            bcc :+
-            @io_error:
-                set_errno EIO
-                rts
-            :
+            ; Seek to the current position
+            jsr seek_to_position
+            bcs @error
+
             ; Write the deleted-entry marker
             jsr begin_write
             lda #$E5
             sta CMD_DATA
             jsr end_write
-            bcs @io_error
+            bcc :+
+                lda #$100-EIO
+                rts
+            :
 
             ; Advance to next entry
             clc
@@ -5833,6 +5617,68 @@ pos_ok:
 error:
     sec
     rts
+
+.endproc
+
+; For file described at (local_addr), seek to the current position.
+; Return C clear if OK. If error, C is set and -errno is in A.
+
+.proc seek_to_position
+
+    ; Retrieve current cluster number
+    ldy #filedata::current_cluster+0
+    lda (local_addr),y
+    sta seek_location+1
+    iny
+    lda (local_addr),y
+    sta seek_location+2
+    iny
+    lda (local_addr),y
+
+    ; Shift to get byte position
+    ldx fs_cluster_shift
+    beq end_lshift
+    lshift:
+        asl seek_location+1
+        rol seek_location+2
+        rol a
+    dex
+    bne lshift
+    end_lshift:
+    sta seek_location+3
+
+    ; Add fs_cluster_base
+    clc
+    lda seek_location+1
+    adc fs_cluster_base+0
+    sta seek_location+1
+    lda seek_location+2
+    adc fs_cluster_base+1
+    sta seek_location+2
+    lda seek_location+3
+    adc fs_cluster_base+2
+    sta seek_location+3
+
+    ; Add the offset within the cluster
+    ldy #filedata::cluster_ptr+0
+    lda (local_addr),y
+    sta seek_location+0
+    iny
+    clc
+    lda seek_location+1
+    adc (local_addr),y
+    sta seek_location+1
+    iny
+    lda seek_location+2
+    adc (local_addr),y
+    sta seek_location+2
+    iny
+    lda seek_location+3
+    adc (local_addr),y
+    sta seek_location+3
+
+    ; Seek to this position
+    jmp do_seek
 
 .endproc
 
@@ -7114,7 +6960,7 @@ got_cluster:
     lda #$0F
     sta fat_entry+3
     jsr write_fat_entry
-    bcs error
+    jcs error
 
     ; Link to the newly allocated cluster
     ; If "cluster" is 0, write to the file data block at (local_addr);
@@ -7795,7 +7641,7 @@ seek_location: .res 4
 .code
 
 ; Seek to the position in seek_location
-; Return C set if error
+; Return C set and -errno in A if error
 .proc do_seek
 
     lda #ULTIDOS_TARGET
@@ -7818,6 +7664,7 @@ seek_location: .res 4
     rts
 
 io_error:
+    lda #$100-EIO
     sec
     rts
 
