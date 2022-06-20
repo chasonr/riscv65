@@ -3228,7 +3228,7 @@ dotdot: .res 32
     lda file_data+filedata::attributes
     and #ATTR_DIRECTORY
     beq not_directory
-        ; File is a directory. This is valid only of O_DIRECTORY | O_RDONLY.
+        ; File is a directory. This is valid only if O_DIRECTORY | O_RDONLY.
         lda file_data+filedata::open_flags+2
         and #O_DIRECTORY >> 16
         bne ok_1
@@ -4037,10 +4037,10 @@ create_file:
     ora (local_addr),y
     iny
     ora (local_addr),y
-    bne read_cluster_chain
+    jne read_cluster_chain
         ; Root directory of FAT12 or FAT16
         ; Check for end of directory
-        ldy filedata::cluster_ptr+1
+        ldy #filedata::cluster_ptr+1
         lda (local_addr),y
         cmp fs_root_dir_bytes+0
         iny
@@ -4049,7 +4049,7 @@ create_file:
         jcs end_of_directory
 
         ; Seek to current location
-        ldy filedata::cluster_ptr+0
+        ldy #filedata::cluster_ptr+0
         lda (local_addr),y
         sta seek_location+0
         iny
@@ -4064,13 +4064,15 @@ create_file:
         lda #0
         adc fs_root_dir+2
         sta seek_location+3
+        jsr do_seek
+        jcs error
 
         ; Repeat until valid entry or end of file
         @read_loop:
             ; Read an entry
             lda #32
             jsr read_bytes
-            jcc io_error
+            jcs io_error
 
             ; Advance the current location
             clc
@@ -4096,7 +4098,7 @@ create_file:
             beq @end_read_loop
 
             ; Check for volume label or LFN record
-            lda io_addr+filedata::attributes
+            lda io_xfer+filedata::attributes
             and #ATTR_VOLUME
             bne @end_read_loop
 
@@ -4105,7 +4107,7 @@ create_file:
 
         @end_read_loop:
         ; Check for end of directory
-        ldy filedata::cluster_ptr+1
+        ldy #filedata::cluster_ptr+1
         lda (local_addr),y
         cmp fs_root_dir_bytes+0
         iny
@@ -4165,7 +4167,7 @@ create_file:
             beq @end_read_loop
 
             ; Check for volume label or LFN record
-            lda io_addr+filedata::attributes
+            lda io_xfer+filedata::attributes
             and #ATTR_VOLUME
             beq return_dir_entry
         @end_read_loop:
@@ -4668,11 +4670,7 @@ create_file:
         ; C is set and -errno is in A.
         rts
     @path_err:
-        sta _RISCV_ireg_0+REG_a0
-        lda #$FF
-        sta _RISCV_ireg_1+REG_a0
-        sta _RISCV_ireg_2+REG_a0
-        sta _RISCV_ireg_3+REG_a0
+        sec
         rts
     @end_path_loop:
     cmp #0
@@ -6526,7 +6524,12 @@ bad_name:
     @zero:
         sta file_data,x
     dex
-    bpl @zero
+    bne @zero ; not bpl
+
+    ; Set a dummy name so that, if we have called opendir("/"), the file will
+    ; be recognized as opened
+    lda #'/'
+    sta file_data+filedata::name+0
 
     ; Set ATTR_DIRECTORY so find_entry doesn't return ENOTDIR
     lda #ATTR_DIRECTORY
