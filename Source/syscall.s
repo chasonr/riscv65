@@ -178,7 +178,10 @@ fs_root_dir:      .res 4 ; 256-byte offset to root directory (FAT12, FAT16)
                          ; or cluster where root directory starts (FAT32)
 fs_cluster_base:  .res 3 ; Add this to shifted cluster number to get offset to cluster
 fs_ext_flags:     .res 1 ; FAT32 extended flags
-fs_info_sector:   .res 2 ; FAT32 info sector
+fs_info_sector:   .res 3 ; FAT32 info sector (as 256-byte offset)
+fs_last_allocated: .res 4 ; FAT32 last allocated cluster
+fs_free_count:    .res 4 ; FAT32 free cluster count
+fs_free_changed:  .res 1 ; FAT32: free cluster count has changed
 fs_current_dir_num_components: .res 1 ; number of components times four (number of bytes in fs_current_dir)
 fs_current_dir:   .res 4*MAX_COMPONENTS ; Starting cluster of current directory; 0 for root on FAT12 or FAT16
 
@@ -1011,7 +1014,8 @@ lseek_location: .res 4
         rts
     do_file_write:
         ; Handle designates an open file
-        jmp write_file
+        jsr write_file
+        jmp flush_after_syscall
     do_tty_write:
         ; Handle is one of the special handles
         jmp write_tty
@@ -2496,7 +2500,7 @@ error:
 
     ; Find the file
     jsr find_file
-    jcs @find_failed
+    bcs @find_failed
 
     ; The found file must be a directory
     lda file_data+filedata::attributes
@@ -2749,7 +2753,8 @@ component_count: .res 1
     lda _RISCV_ireg_0+REG_a2
     sta open_mode+0
 
-    jmp open_common
+    jsr open_common
+    jmp flush_after_syscall
 
 .endproc
 
@@ -2795,7 +2800,8 @@ component_count: .res 1
     lda _RISCV_ireg_0+REG_a3
     sta open_mode+0
 
-    jmp open_common
+    jsr open_common
+    jmp flush_after_syscall
 
 @error:
     sta _RISCV_ireg_0+REG_a0
@@ -2835,7 +2841,8 @@ open_mode: .res 1
     lda _RISCV_ireg_3+REG_a0
     sta io_addr+3
 
-    jmp mkdir_common
+    jsr mkdir_common
+    jmp flush_after_syscall
 
 .endproc
 
@@ -3666,7 +3673,8 @@ create_file:
     sta io_addr+3
 
     ; We don't have unlinkat yet, but this will make it easier
-    jmp unlink_common
+    jsr unlink_common
+    jmp flush_after_syscall
 
 .endproc
 
@@ -3750,7 +3758,8 @@ create_file:
     sta io_addr+3
 
     ; We don't have rmdirat yet, but this will make it easier
-    jmp rmdir_common
+    jsr rmdir_common
+    jmp flush_after_syscall
 
 .endproc
 
@@ -4028,7 +4037,7 @@ create_file:
     ora (local_addr),y
     iny
     ora (local_addr),y
-    jne read_cluster_chain
+    bne read_cluster_chain
         ; Root directory of FAT12 or FAT16
         ; Check for end of directory
         ldy filedata::cluster_ptr+1
@@ -4944,6 +4953,8 @@ end_read:
         BPB_Reserved    .byte 12 ; 52 (unused)
     .endstruct
 
+    jsr fat_init
+
     ; Read the boot sector from the file system
     lda #0
     sta seek_location+0
@@ -5241,6 +5252,7 @@ end_read:
     sta fs_ext_flags
     sta fs_info_sector+0
     sta fs_info_sector+1
+    sta fs_info_sector+2
     sta fs_current_dir_num_components
     lda fs_clusters+3
     ora fs_clusters+2
@@ -5283,6 +5295,7 @@ end_read:
             sta fs_root_dir+2
             lda io_xfer+boot_record::BPB_RootClus+3
             sta fs_root_dir+3
+            jsr init_info_sector
             rts
         @bad_fs_2:
             lda #0
@@ -5321,6 +5334,164 @@ cluster_offset_hi:
     .byte >$2000
     .byte >$4000
     .byte >$8000
+
+.endproc
+
+; For FAT32: Process the information sector if it is present
+.proc init_info_sector
+
+    lda #0
+    sta fs_free_changed
+    ; Get the location of the information sector
+    ; 0x0000 and 0xFFFF indicate that the sector is not present
+    lda fs_info_sector+0
+    ora fs_info_sector+1
+    beq no_block_1
+    lda fs_info_sector+0
+    and fs_info_sector+1
+    cmp #$FF
+    bne :+
+    no_block_1:
+        jmp no_block
+    :
+    ; Shift to make a byte offset
+    lda #0
+    ldx fs_sector_shift
+    beq @end_lshift
+    @lshift:
+        asl fs_info_sector+0
+        rol fs_info_sector+1
+        rol a
+    dex
+    bne @lshift
+    @end_lshift:
+    sta fs_info_sector+2
+
+    ; Read the first signature for the information sector
+    lda #0
+    sta seek_location+0
+    lda fs_info_sector+0
+    sta seek_location+1
+    lda fs_info_sector+1
+    sta seek_location+2
+    lda fs_info_sector+2
+    sta seek_location+3
+    jsr do_seek
+    bcs error_1
+    lda #4
+    jsr read_bytes
+    bcs error_1
+    lda io_xfer+0
+    cmp #$52
+    bne no_block_0
+    lda io_xfer+1
+    cmp #$52
+    bne no_block_0
+    lda io_xfer+2
+    cmp #$61
+    bne no_block_0
+    lda io_xfer+3
+    cmp #$41
+    bne no_block_0
+
+    ; Read the second signature and the data
+    lda #$E4
+    sta seek_location+0
+    clc
+    lda fs_info_sector+0
+    adc #1
+    sta seek_location+1
+    lda fs_info_sector+1
+    adc #0
+    sta seek_location+2
+    lda fs_info_sector+2
+    adc #0
+    sta seek_location+3
+    jsr do_seek
+error_1:
+    bcs error_0
+    lda #12
+    jsr read_bytes
+    bcs error_0
+    lda io_xfer+0
+    cmp #$72
+    bne no_block_0
+    lda io_xfer+1
+    cmp #$72
+    bne no_block_0
+    lda io_xfer+2
+    cmp #$41
+no_block_0:
+    bne no_block
+    lda io_xfer+3
+    cmp #$61
+    bne no_block
+
+    ; Copy data into place
+    lda io_xfer+4
+    sta fs_free_count+0
+    lda io_xfer+5
+    sta fs_free_count+1
+    lda io_xfer+6
+    sta fs_free_count+2
+    lda io_xfer+7
+    sta fs_free_count+3
+    lda io_xfer+8
+    sta fs_last_allocated+0
+    lda io_xfer+9
+    sta fs_last_allocated+1
+    lda io_xfer+10
+    sta fs_last_allocated+2
+    lda io_xfer+11
+    sta fs_last_allocated+3
+
+    ; Read the third signature
+    lda #$FC
+    sta seek_location+0
+    clc
+    lda fs_info_sector+0
+    adc #1
+    sta seek_location+1
+    lda fs_info_sector+1
+    adc #0
+    sta seek_location+2
+    lda fs_info_sector+2
+    adc #0
+    sta seek_location+3
+    jsr do_seek
+error_0:
+    bcs error
+    lda #4
+    jsr read_bytes
+    bcs error
+    lda io_xfer+0
+    cmp #$00
+    bne no_block
+    lda io_xfer+1
+    cmp #$00
+    bne no_block
+    lda io_xfer+2
+    cmp #$55
+    bne no_block
+    lda io_xfer+3
+    cmp #$AA
+    bne no_block
+
+    rts
+
+no_block:
+    ; Indicate no information block
+    lda #0
+    sta fs_info_sector+0
+    sta fs_info_sector+1
+    sta fs_info_sector+2
+    rts
+
+error:
+    ; Oops
+    lda #0
+    sta fs_type
+    rts
 
 .endproc
 
@@ -6960,7 +7131,7 @@ got_cluster:
     lda #$0F
     sta fat_entry+3
     jsr write_fat_entry
-    jcs error
+    bcs error
 
     ; Link to the newly allocated cluster
     ; If "cluster" is 0, write to the file data block at (local_addr);
@@ -7034,7 +7205,25 @@ cluster_scans: .res 1
 cluster_num: .res 4
 fat_entry: .res 4
 
+; One block of FAT entries is cached here
+fat_block: .res 128
+fat_begin: .res 4
+fat_dirty: .res 1
+
 .code
+
+; Set up the FAT cache
+.proc fat_init
+
+    lda #0
+    sta fat_dirty
+    sta fat_begin+0
+    sta fat_begin+1
+    sta fat_begin+2
+    sta fat_begin+3
+    rts
+
+.endproc
 
 ; Given the cluster number in cluster_num, read the FAT entry to fat_entry.
 ; If the FAT entry is read: return C clear and the data in fat_entry.
@@ -7075,7 +7264,7 @@ good_cluster:
     cmp #12
     beq fat_12
     cmp #16
-    jeq fat_16
+    beq fat_16
     cmp #32
     jeq fat_32
 io_error:
@@ -7102,23 +7291,18 @@ fat_12:
     sta seek_location+2
     sta seek_location+3
 
-    ; Seek to location and read two bytes
-    jsr add_first_fat
-    jsr do_seek
-    bcs io_error
-
-    lda #2
-    jsr read_bytes
-    bcs io_error
+    ; If the entry is not in memory, read it
+    jsr read_fat_12
+    bcc :+
+        rts
+    :
 
     ; Select entry according to bit 0 of cluster number
-    lda #0
-    sta fat_entry+2
     lda cluster_num+0
     lsr a
-    lda io_xfer+0
+    lda fat_block+0,x
     sta fat_entry+0
-    lda io_xfer+1
+    lda fat_block+1,x
     bcs odd_cluster
         ; Even cluster number
         and #$0F
@@ -7154,30 +7338,21 @@ fat_16:
     rol a
     sta seek_location+2
 
-    ; Seek the location of the entry in the first FAT
-    jsr add_first_fat
-    jsr do_seek
-    bcs @io_error
-
-    ; Read two bytes
-    lda #2
-    jsr read_bytes
-    bcs @io_error
+    ; Read this entry from the volume
+    jsr read_fat_16_32
+    bcc :+
+        rts
+    :
 
     ; Return the FAT entry
-    lda io_xfer+0
+    lda fat_block+0,x
     sta fat_entry+0
-    lda io_xfer+1
+    lda fat_block+1,x
     sta fat_entry+1
     lda #0
     sta fat_entry+2
     sta fat_entry+3
     clc
-    rts
-
-@io_error:
-    lda #$100-EIO
-    sec
     rts
 
 fat_32:
@@ -7199,38 +7374,21 @@ fat_32:
     rol a
     sta seek_location+3
 
-    ; Add fs_first_fat or fs_second_fat
-    lda fs_ext_flags
-    cmp #$81
-    bcs @second_fat
-        jsr add_first_fat
-        jmp @seek
-    @second_fat:
-        jsr add_second_fat
-    @seek:
-
-    ; Read from that position
-    jsr do_seek
-    bcs @io_error
-
-    lda #4
-    jsr read_bytes
-    bcs @io_error
+    ; Read the entry from the volume
+    jsr read_fat_16_32
+    bcc :+
+        rts
+    :
 
     ; Return the FAT entry
-    lda io_xfer+0
+    lda fat_block+0,x
     sta fat_entry+0
-    lda io_xfer+1
+    lda fat_block+1,x
     sta fat_entry+1
-    lda io_xfer+2
+    lda fat_block+2,x
     sta fat_entry+2
-    lda io_xfer+3
+    lda fat_block+3,x
     sta fat_entry+3
-    rts
-
-@io_error:
-    lda #$100-EIO
-    sec
     rts
 
 .endproc
@@ -7300,14 +7458,11 @@ fat_12:
     sta seek_location+2
     sta seek_location+3
 
-    ; Seek to location and read two bytes
-    jsr add_first_fat
-    jsr do_seek
-    bcs @io_error
-
-    lda #2
-    jsr read_bytes
-    bcs @io_error
+    ; Read the location into memory
+    jsr read_fat_12
+    bcc :+
+        rts
+    :
 
     ; Update entry according to bit 0 of cluster number
     lda cluster_num+0
@@ -7315,61 +7470,34 @@ fat_12:
     bcs @odd_cluster
         ; Even cluster number
         lda fat_entry+0
-        sta fat_temp+0
+        sta fat_block+0,x
         lda fat_entry+1
-        eor io_xfer+1
+        eor fat_block+1,x
         and #$0F
-        eor io_xfer+1
-        sta fat_temp+1
+        eor fat_block+1,x
+        sta fat_block+1,x
         jmp @write
     @odd_cluster:
         ; Odd cluster number
         lda fat_entry+1
-        sta fat_temp+1
+        sta fat_block+1,x
         lda fat_entry+0
         .repeat 4
             asl a
-            rol fat_temp+1
+            rol fat_block+1,x
         .endrep
-        eor io_xfer+0
-        and #$0F
-        eor io_xfer+0
-        sta fat_temp+0
+        eor fat_block+0,x
+        and #$F0
+        eor fat_block+0,x
+        sta fat_block+0,x
 
     @write:
-    ; Seek back to the just-read location
-    jsr do_seek
-    bcs @io_error
 
-    ; Write the FAT entry
-    jsr begin_write
-    lda fat_temp+0
-    sta CMD_DATA
-    lda fat_temp+1
-    sta CMD_DATA
-    jsr end_write
-    bcs @io_error
+    ; Mark the FAT block as dirty
+    lda #1
+    sta fat_dirty
 
-    ; Seek to the second FAT
-    jsr add_fat_delta
-    jsr do_seek
-    bcs @io_error
-
-    ; Write the FAT entry
-    jsr begin_write
-    lda fat_temp+0
-    sta CMD_DATA
-    lda fat_temp+1
-    sta CMD_DATA
-    jsr end_write
-    bcs @io_error
-
-    ; C already clear
-    rts
-
-@io_error:
-    lda #$100-EIO
-    sec
+    clc
     rts
 
 fat_16:
@@ -7385,40 +7513,23 @@ fat_16:
     rol a
     sta seek_location+2
 
-    ; Seek the location of the entry in the first FAT
-    jsr add_first_fat
-    jsr do_seek
-    bcs @io_error
+    ; Read the location into memory
+    jsr read_fat_16_32
+    bcc :+
+        rts
+    :
 
     ; Write two bytes
-    jsr begin_write
     lda fat_entry+0
-    sta CMD_DATA
+    sta fat_block+0,x
     lda fat_entry+1
-    sta CMD_DATA
-    jsr end_write
-    bcs @io_error
+    sta fat_block+1,x
 
-    ; Again for the second FAT
-    jsr add_fat_delta
-    jsr do_seek
-    bcs @io_error
+    ; Mark the FAT block as dirty
+    lda #1
+    sta fat_dirty
 
-    ; Write two bytes
-    jsr begin_write
-    lda fat_entry+0
-    sta CMD_DATA
-    lda fat_entry+1
-    sta CMD_DATA
-    jsr end_write
-    bcs @io_error
-
-    ; C already clear
-    rts
-
-@io_error:
-    lda #$100-EIO
-    sec
+    clc
     rts
 
 fat_32:
@@ -7440,134 +7551,589 @@ fat_32:
     rol a
     sta seek_location+3
 
-    ; Access both FATs if mirroring is enabled, else only one
-    lda fs_ext_flags
-    bmi no_mirror
-        ; Write first FAT
-        jsr add_first_fat
-        jsr do_seek
-        bcs @io_error
-        lda #4
-        jsr read_bytes
-        bcs @io_error
+    ; Read the location into memory
+    jsr read_fat_16_32
+    bcc :+
+        rts
+    :
+
+    ; Update the free count:
+    ; Check that we have an info sector
+    lda fs_info_sector+0
+    ora fs_info_sector+1
+    ora fs_info_sector+2
+    beq @updated_0
+    ; and that the free count is valid
+    lda fs_free_count+0
+    and fs_free_count+1
+    and fs_free_count+2
+    and fs_free_count+3
+    cmp #$FF
+    @updated_0:
+    beq @free_count_updated
+
+        ldy #0
+
+        ; Are we writing a free cluster entry?
         lda fat_entry+3
-        eor io_xfer+3
         and #$0F
-        eor io_xfer+3
-        sta fat_temp+0
-        jsr do_seek
-        bcs @io_error
-        jsr begin_write
-        lda fat_entry+0
-        sta CMD_DATA
-        lda fat_entry+1
-        sta CMD_DATA
-        lda fat_entry+2
-        sta CMD_DATA
-        lda fat_temp+0
-        sta CMD_DATA
-        jsr end_write
-        bcs @io_error
+        ora fat_entry+0
+        ora fat_entry+1
+        ora fat_entry+2
+        bne :+
+            ; Set Y bit 0
+            iny
+        :
 
-        ; Write second FAT
-        jsr add_fat_delta
-        jsr do_seek
-        bcs @io_error
-        jsr begin_write
-        lda fat_entry+0
-        sta CMD_DATA
-        lda fat_entry+1
-        sta CMD_DATA
-        lda fat_entry+2
-        sta CMD_DATA
-        lda fat_temp+0
-        sta CMD_DATA
-        jsr end_write
-        bcs @io_error
-
-        ; C already clear
-        rts
-
-    @io_error:
-        lda #$100-EIO
-        sec
-        rts
-
-    no_mirror:
-    cmp #$81
-    bcs @second_fat
-        ; Write first FAT
-        jsr add_first_fat
-        jsr do_seek
-        bcs @io_error
-        lda #4
-        jsr read_bytes
-        bcs @io_error
-        lda fat_entry+3
-        eor io_xfer+3
+        ; Is the existing entry free?
+        lda fat_block+3,x
         and #$0F
-        eor io_xfer+3
-        sta fat_temp+0
-        jsr do_seek
-        bcs @io_error
-        jsr begin_write
-        lda fat_entry+0
-        sta CMD_DATA
-        lda fat_entry+1
-        sta CMD_DATA
-        lda fat_entry+2
-        sta CMD_DATA
-        lda fat_temp+0
-        sta CMD_DATA
-        jsr end_write
-        bcs @io_error
+        ora fat_block+0,x
+        ora fat_block+1,x
+        ora fat_block+2,x
+        bne :+
+            ; Set Y bit 1
+            iny
+            iny
+        :
 
-        ; C already clear
-        rts
+        cpy #1
+        bne :+
+            ; Writing free entry onto not-free
+            lda #1
+            sta fs_free_changed
+            inc fs_free_count+0
+            bne @free_count_updated
+            inc fs_free_count+1
+            bne @free_count_updated
+            inc fs_free_count+2
+            bne @free_count_updated
+            inc fs_free_count+3
+            bne @free_count_updated
+            ; Overflow (this shouldn't happen)
+            lda #$FF
+            sta fs_free_count+0
+            sta fs_free_count+1
+            sta fs_free_count+2
+            sta fs_free_count+3
+            bne @free_count_updated
+        :
 
-    @second_fat:
-        ; Write second FAT
-        jsr add_second_fat
-        jsr do_seek
-        bcs @io_error
-        lda #4
-        jsr read_bytes
-        bcs @io_error
-        lda fat_entry+3
-        eor io_xfer+3
-        and #$0F
-        eor io_xfer+3
-        sta fat_temp+0
-        jsr do_seek
-        bcs @io_error
-        jsr begin_write
-        lda fat_entry+0
-        sta CMD_DATA
-        lda fat_entry+1
-        sta CMD_DATA
-        lda fat_entry+2
-        sta CMD_DATA
-        lda fat_temp+0
-        sta CMD_DATA
-        jsr end_write
-        bcs @io_error
+        cpy #2
+        bne @free_count_updated
+            ; Writing not-free entry onto free
+            lda #1
+            sta fs_free_changed
+            sec
+            lda fs_free_count+0
+            sbc #1
+            sta fs_free_count+0
+            lda fs_free_count+1
+            sbc #0
+            sta fs_free_count+1
+            lda fs_free_count+2
+            sbc #0
+            sta fs_free_count+2
+            lda fs_free_count+3
+            sbc #0
+            sta fs_free_count+3
+            ; Underflow produces $FFFFFFFF, which marks the count as invalid
 
-        ; C already clear
-        rts
+    @free_count_updated:
 
-    @io_error:
-        lda #$100-EIO
-        sec
-        rts
+    ; Write four bytes
+    lda fat_entry+0
+    sta fat_block+0,x
+    lda fat_entry+1
+    sta fat_block+1,x
+    lda fat_entry+2
+    sta fat_block+2,x
+    lda fat_entry+3
+    eor fat_block+3,x
+    and #$0F
+    eor fat_block+3,x
+    sta fat_block+3,x
+
+    ; Mark the FAT block as dirty
+    lda #1
+    sta fat_dirty
+
+    clc
+    rts
 
 .endproc
 
-.bss
+; seek_location contains the offset into the FAT of a pair of FAT entries on a
+; FAT12 volume. If that is not in memory, read from the volume.
+; If success, C is clear and X contains the offset in fat_block to the pair.
+; Otherwise, C is set and -errno is in A.
 
-; Temporary bytes used by write_fat_entry
-fat_temp: .res 2
+.proc read_fat_12
 
-.code
+    ; Determine location in first FAT
+    jsr add_first_fat
+    ; If it's not in memory, switch to it
+    sec
+    lda seek_location+0
+    sbc fat_begin+0
+    tax
+    lda seek_location+1
+    sbc fat_begin+1
+    bne @read_fat
+    lda seek_location+2
+    sbc fat_begin+2
+    bne @read_fat
+    lda seek_location+3
+    sbc fat_begin+3
+    bne @read_fat
+    cpx #127
+    bcc @fat_ok
+    @read_fat:
+
+        ; Write the current FAT block if it has been changed
+        jsr flush_fat
+        bcc :+
+            rts
+        :
+
+        ; Seek to the 64-byte boundary before the location
+        lda seek_location+0
+        pha
+        and #$C0
+        sta seek_location
+        jsr do_seek
+        bcc :+
+            tsx
+            inx
+            txs
+            rts
+        :
+
+        ; Read 128 bytes
+        lda #128
+        jsr read_bytes
+        bcc :+
+            pla
+            lda #$100-EIO
+            rts
+        :
+        ldx #127
+        @copy:
+            lda io_xfer,x
+            sta fat_block,x
+        dex
+        bpl @copy
+
+        lda seek_location+0
+        sta fat_begin+0
+        lda seek_location+1
+        sta fat_begin+1
+        lda seek_location+2
+        sta fat_begin+2
+        lda seek_location+3
+        sta fat_begin+3
+
+        ; Set the offset to the FAT entry
+        pla
+        and #$3F
+        tax
+
+    @fat_ok:
+
+    clc
+    rts
+
+.endproc
+
+; seek_location contains the offset into the FAT of a FAT entry on a FAT16
+; or FAT32 volume. If that is not in memory, read from the volume.
+; If success, C is clear and X contains the offset in fat_block to the entry.
+; Otherwise, C is set and -errno is in A.
+
+.proc read_fat_16_32
+
+    ; Determine location in first FAT
+    jsr add_first_fat
+    ; If it's not in memory, switch to it
+    sec
+    lda seek_location+0
+    sbc fat_begin+0
+    tax
+    lda seek_location+1
+    sbc fat_begin+1
+    bne @read_fat
+    lda seek_location+2
+    sbc fat_begin+2
+    bne @read_fat
+    lda seek_location+3
+    sbc fat_begin+3
+    bne @read_fat
+    cpx #128
+    bcc @fat_ok
+    @read_fat:
+
+        ; Write the current FAT block if it has been changed
+        jsr flush_fat
+        bcc :+
+            rts
+        :
+
+        ; Read from the second FAT if that is configured
+        lda fs_type
+        cmp #32
+        bne :+
+        lda fs_ext_flags
+        cmp #$81
+        bcc :+
+            jsr add_fat_delta
+        :
+
+        ; Seek to the 128-byte boundary before the location
+        lda seek_location+0
+        pha
+        and #$80
+        sta seek_location
+        jsr do_seek
+        bcc :+
+            tsx
+            inx
+            txs
+            rts
+        :
+
+        ; Read 128 bytes
+        lda #128
+        jsr read_bytes
+        bcc :+
+            pla
+            lda #$100-EIO
+            rts
+        :
+        ldx #127
+        @copy:
+            lda io_xfer,x
+            sta fat_block,x
+        dex
+        bpl @copy
+
+        ; Switch back to the first FAT
+        lda fs_type
+        cmp #32
+        bne :+
+        lda fs_ext_flags
+        cmp #$81
+        bcc :+
+            jsr sub_fat_delta
+        :
+
+        lda seek_location+0
+        sta fat_begin+0
+        lda seek_location+1
+        sta fat_begin+1
+        lda seek_location+2
+        sta fat_begin+2
+        lda seek_location+3
+        sta fat_begin+3
+
+        ; Set the offset to the FAT entry
+        pla
+        and #$7F
+        tax
+
+    @fat_ok:
+
+    clc
+    rts
+
+.endproc
+
+; Flush the FAT after a system call that might alter it
+; On entry, C is set if an error is pending, and -errno is in A;
+; if that is the case, that error will be returned even if flush_fat succeeds
+
+.proc flush_after_syscall
+
+    pha
+    php
+    jsr flush_fat
+    bcs flush_error
+    ; Return the previous error if any
+    plp
+    pla
+    rts
+
+flush_error:
+    ; Return the error from flush_fat
+    tsx
+    inx
+    inx
+    txs
+    rts
+
+.endproc
+
+; If the current FAT block is changed, write it to disk
+; On error, C is set and -errno is in A
+
+.proc flush_fat
+
+    lda fat_dirty
+    bne :+
+        ; No need to write if dirty flag is not set
+        clc
+        rts
+    :
+
+    ; If FAT32, and an information block is present, update the free count
+    lda fs_info_sector+0
+    ora fs_info_sector+1
+    ora fs_info_sector+2
+    beq free_updated_0
+    lda fs_free_changed
+    free_updated_0:
+    beq free_updated
+
+        ; Need to seek, but preserve seek_location
+        lda seek_location+0
+        pha
+        lda seek_location+1
+        pha
+        lda seek_location+2
+        pha
+        lda seek_location+3
+        pha
+
+        lda #$E8
+        sta seek_location+0
+        clc
+        lda fs_info_sector+0
+        adc #$01
+        sta seek_location+1
+        lda fs_info_sector+1
+        adc #$00
+        sta seek_location+2
+        lda fs_info_sector+2
+        adc #$00
+        sta seek_location+3
+        jsr do_seek
+        bcc :+
+            tax
+            pla
+            sta seek_location+3
+            pla
+            sta seek_location+2
+            pla
+            sta seek_location+1
+            pla
+            sta seek_location+0
+            txa
+            sec
+            rts
+        :
+        pla
+        sta seek_location+3
+        pla
+        sta seek_location+2
+        pla
+        sta seek_location+1
+        pla
+        sta seek_location+0
+
+        ; Write four bytes
+        jsr begin_write
+        lda fs_free_count+0
+        sta CMD_DATA
+        lda fs_free_count+1
+        sta CMD_DATA
+        lda fs_free_count+2
+        sta CMD_DATA
+        lda fs_free_count+3
+        sta CMD_DATA
+        jsr end_write
+        bcc :+
+            lda #$100-EIO
+            rts
+        :
+
+        lda #0
+        sta fs_free_changed
+
+    free_updated:
+
+    ; If only one FAT, write that one
+    lda fs_first_fat+0
+    cmp fs_second_fat+0
+    bne two_fats
+    lda fs_first_fat+1
+    cmp fs_second_fat+1
+    bne two_fats
+    lda fs_first_fat+2
+    cmp fs_second_fat+2
+    bne two_fats
+    write_first:
+        jsr write_first_fat
+        bcs :+
+            lda #0
+            sta fat_dirty
+        :
+        rts
+
+    two_fats:
+    ; If FAT12 or FAT16, write both FATs
+    lda fs_type
+    cmp #32
+    beq fat32
+    write_both:
+        jsr write_first_fat
+        bcs error
+    write_second:
+        jsr write_second_fat
+        bcs error
+            lda #0
+            sta fat_dirty
+        error:
+        rts
+
+    fat32:
+    ; If mirroring is enabled, write both FATs
+    lda fs_ext_flags
+    bpl write_both
+
+    ; Otherwise, write the selected FAT
+    and #$0F
+    beq write_first
+    bne write_second
+
+.endproc
+
+; Write the current FAT block to the first FAT
+; On error, return C set and -errno in A
+
+.proc write_first_fat
+
+    ; seek_location contains the offset to a FAT entry to be accessed.
+    ; We need to save that.
+    lda seek_location+0
+    pha
+    lda seek_location+1
+    pha
+    lda seek_location+2
+    pha
+    lda seek_location+3
+    pha
+
+    ; Copy FAT block location to seek_location
+    lda fat_begin+0
+    sta seek_location+0
+    lda fat_begin+1
+    sta seek_location+1
+    lda fat_begin+2
+    sta seek_location+2
+    lda fat_begin+3
+    sta seek_location+3
+
+    ; Seek
+    jsr do_seek
+
+    ; Preserve the error, if any, and restore seek_location
+    tax
+    pla
+    sta seek_location+3
+    pla
+    sta seek_location+2
+    pla
+    sta seek_location+1
+    pla
+    sta seek_location+0
+
+    ; Return any error
+    bcc :+
+        txa
+        rts
+    :
+
+    ; Write the block
+    jsr begin_write
+    ldx #0
+    @write:
+        lda fat_block,x
+        sta CMD_DATA
+    inx
+    cpx #128
+    bcc @write
+    jsr end_write
+    bcc :+
+        lda #$100-EIO
+    :
+    rts
+
+.endproc
+
+; Write the current FAT block to the second FAT
+; On error, return C set and -errno in A
+
+.proc write_second_fat
+
+    ; seek_location contains the offset to a FAT entry to be accessed.
+    ; We need to save that.
+    lda seek_location+0
+    pha
+    lda seek_location+1
+    pha
+    lda seek_location+2
+    pha
+    lda seek_location+3
+    pha
+
+    ; copy FAT block location to seek_location
+    lda fat_begin+0
+    sta seek_location+0
+    lda fat_begin+1
+    sta seek_location+1
+    lda fat_begin+2
+    sta seek_location+2
+    lda fat_begin+3
+    sta seek_location+3
+
+    ; compute the offset in the second FAT
+    jsr add_fat_delta
+
+    ; seek
+    jsr do_seek
+
+    ; preserve the error, if any, and restore seek_location
+    tax
+    pla
+    sta seek_location+3
+    pla
+    sta seek_location+2
+    pla
+    sta seek_location+1
+    pla
+    sta seek_location+0
+
+    ; return any error
+    bcc :+
+        txa
+        rts
+    :
+
+    ; write the block
+    jsr begin_write
+    ldx #0
+    @write:
+        lda fat_block,x
+        sta CMD_DATA
+    inx
+    cpx #128
+    bcc @write
+    jsr end_write
+    bcc :+
+        lda #$100-EIO
+    :
+    rts
+
+.endproc
 
 ; Add fs_first_fat to seek_location
 .proc add_first_fat
@@ -7580,24 +8146,6 @@ fat_temp: .res 2
     adc seek_location+2
     sta seek_location+2
     lda fs_first_fat+2
-    adc seek_location+3
-    sta seek_location+3
-
-    rts
-
-.endproc
-
-; Add fs_second_fat to seek_location
-.proc add_second_fat
-
-    clc
-    lda fs_second_fat+0
-    adc seek_location+1
-    sta seek_location+1
-    lda fs_second_fat+1
-    adc seek_location+2
-    sta seek_location+2
-    lda fs_second_fat+2
     adc seek_location+3
     sta seek_location+3
 
@@ -7627,6 +8175,35 @@ fat_temp: .res 2
     adc seek_location+2
     sta seek_location+2
     lda fs_second_fat+2
+    adc seek_location+3
+    sta seek_location+3
+
+    rts
+
+.endproc
+
+; Given seek_location for second FAT, offset it to point to first FAT
+.proc sub_fat_delta
+
+    sec
+    lda seek_location+1
+    sbc fs_second_fat+0
+    sta seek_location+1
+    lda seek_location+2
+    sbc fs_second_fat+1
+    sta seek_location+2
+    lda seek_location+3
+    sbc fs_second_fat+2
+    sta seek_location+3
+
+    clc
+    lda fs_first_fat+0
+    adc seek_location+1
+    sta seek_location+1
+    lda fs_first_fat+1
+    adc seek_location+2
+    sta seek_location+2
+    lda fs_first_fat+2
     adc seek_location+3
     sta seek_location+3
 
