@@ -374,6 +374,18 @@ error:
         rts
     :
 
+    ; Is this the root directory on FAT12 or FAT16?
+    ldx #0
+    ldy #filedata::num_components
+    lda (local_addr),y
+    bne :+
+    lda fs_type
+    cmp #32
+    beq :+
+        dex
+    :
+    stx lseek_root
+
     ; Get the origin from which the seek shall be done
     lda _RISCV_ireg_1+REG_a2
     ora _RISCV_ireg_2+REG_a2
@@ -392,12 +404,34 @@ error:
     dex
     bne check_2
         ; 1 (SEEK_CUR)
-        jsr get_position
-        jmp have_origin
+        bit lseek_root
+        bpl @chain_pos
+            ldy #filedata::cluster_ptr+0
+            lda (local_addr),y
+            sta lseek_location+0
+            iny
+            lda (local_addr),y
+            sta lseek_location+1
+            iny
+            lda (local_addr),y
+            sta lseek_location+2
+            lda #0
+            sta lseek_location+3
+            jmp have_origin
+        @chain_pos:
+            jsr get_position
+            jmp have_origin
     check_2:
     dex
     bne bad_param
         ; 2 (SEEK_END)
+        ; Directories do not track the size in the directory entry.
+        ; It's simpler just not to allow SEEK_END on a directory.
+        ldy #filedata::attributes
+        lda (local_addr),y
+        and #ATTR_DIRECTORY
+        bne bad_param
+
         ldy #filedata::size
         lda (local_addr),y
         sta lseek_location+0
@@ -444,19 +478,52 @@ error:
     bne bad_param ; Add overflowed
 
     ; Does the seek location exceed the size of the file?
-    ldy #filedata::size
-    lda (local_addr),y
-    cmp lseek_location+0
-    iny
-    lda (local_addr),y
-    sbc lseek_location+1
-    iny
-    lda (local_addr),y
-    sbc lseek_location+2
-    iny
-    lda (local_addr),y
-    sbc lseek_location+3
-    bcc bad_param ; Else seek beyond end of file
+    ; For normal file, use the size field of the directory entry.
+    ; For root directory, use fs_root_dir_bytes.
+    ; For cluster-chain directory, we can't check the size here; we must look
+    ; for the end of the cluster chain.
+    bit lseek_root
+    bpl size_cluster_chain
+        lda lseek_location+0
+        cmp #1
+        lda lseek_location+1
+        sbc fs_root_dir_bytes+0
+        lda lseek_location+2
+        sbc fs_root_dir_bytes+1
+        lda lseek_location+3
+        sbc #0
+        bcs bad_param
+        ; cluster_ptr is repurposed to be the offset into the root directory
+        ldy #filedata::cluster_ptr+0
+        lda lseek_location+0
+        sta (local_addr),y
+        iny
+        lda lseek_location+1
+        sta (local_addr),y
+        iny
+        lda lseek_location+2
+        sta (local_addr),y
+        jmp return
+    size_cluster_chain:
+        ldy #filedata::attributes
+        lda (local_addr),y
+        and #ATTR_DIRECTORY
+        bne size_checked
+        ldy #filedata::size
+        lda (local_addr),y
+        cmp lseek_location+0
+        iny
+        lda (local_addr),y
+        sbc lseek_location+1
+        iny
+        lda (local_addr),y
+        sbc lseek_location+2
+        iny
+        lda (local_addr),y
+        sbc lseek_location+3
+        jcc bad_param ; Else seek beyond end of file
+
+    size_checked:
 
     ; Determine the cluster number of the seek position
     lda lseek_location+1
@@ -549,7 +616,13 @@ error:
     cluster_loop:
 
         jsr next_cluster
-        bcs io_error
+        bcc :+
+            ; ENOENT means end of cluster chain; return EINVAL instead
+            cmp #$100-ENOENT
+            bne :+
+                lda #$100-EINVAL
+        :
+        jmp io_error
 
     ; lseek_count is negative, to simplify this count
     inc lseek_count+0
@@ -597,6 +670,7 @@ error:
     lda lseek_location+0
     sta (local_addr),y
 
+return:
     ; Return the new file position
     lda lseek_location+0
     sta _RISCV_ireg_0+REG_a0
@@ -665,6 +739,7 @@ io_error:
 lseek_count: .res 3
 lseek_cluster: .res 3
 lseek_location: .res 4
+lseek_root: .res 1
 
 .code
 
