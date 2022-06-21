@@ -1,17 +1,18 @@
 diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/machine/syscall.h newlib-4.1.0/libgloss/riscv/machine/syscall.h
 --- newlib-4.1.0-original/libgloss/riscv/machine/syscall.h	2020-12-18 18:50:49.000000000 -0500
-+++ newlib-4.1.0/libgloss/riscv/machine/syscall.h	2022-06-09 20:49:22.063354504 -0400
-@@ -52,6 +52,7 @@
++++ newlib-4.1.0/libgloss/riscv/machine/syscall.h	2022-06-20 21:30:18.217298611 -0400
+@@ -52,6 +52,8 @@
  #define SYS_stat 1038
  #define SYS_lstat 1039
  #define SYS_time 1062
 +#define SYS_rmdir 1152
++#define SYS_rename 1153
  #define SYS_getmainvars 2011
  
  /* Semihosting operations.  */
 diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/Makefile.in newlib-4.1.0/libgloss/riscv/Makefile.in
 --- newlib-4.1.0-original/libgloss/riscv/Makefile.in	2020-12-18 18:50:49.000000000 -0500
-+++ newlib-4.1.0/libgloss/riscv/Makefile.in	2022-06-15 19:54:09.713416741 -0400
++++ newlib-4.1.0/libgloss/riscv/Makefile.in	2022-06-20 21:27:33.677425512 -0400
 @@ -21,6 +21,7 @@
  	sys_fstat.c \
  	sys_ftime.c \
@@ -20,7 +21,7 @@ diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/Makefile.in newlib-4.1.0/li
  	sys_getpid.c \
  	sys_gettimeofday.c \
  	sys_isatty.c \
-@@ -28,9 +29,11 @@
+@@ -28,9 +29,12 @@
  	sys_link.c \
  	sys_lseek.c \
  	sys_lstat.c \
@@ -28,11 +29,12 @@ diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/Makefile.in newlib-4.1.0/li
  	sys_openat.c \
  	sys_open.c \
  	sys_read.c \
++	sys_rename.c \
 +	sys_rmdir.c \
  	sys_sbrk.c \
  	sys_stat.c \
  	sys_sysconf.c \
-@@ -52,6 +55,7 @@
+@@ -52,6 +56,7 @@
  	sys_getcwd.c \
  	sys_getpid.c \
  	sys_kill.c \
@@ -102,6 +104,19 @@ diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/sys_mkdir.c newlib-4.1.0/li
 +{
 +  return syscall_errno (SYS_mkdir, 1, (long)path, (long)mode, 0, 0, 0, 0);
 +}
+diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/sys_rename.c newlib-4.1.0/libgloss/riscv/sys_rename.c
+--- newlib-4.1.0-original/libgloss/riscv/sys_rename.c	1969-12-31 19:00:00.000000000 -0500
++++ newlib-4.1.0/libgloss/riscv/sys_rename.c	2022-06-20 21:29:08.537348014 -0400
+@@ -0,0 +1,9 @@
++#include <machine/syscall.h>
++#include <sys/types.h>
++#include "internal_syscall.h"
++
++/* Rename a file.  */
++int _rename(const char *oldpath, const char *newpath)
++{
++  return syscall_errno (SYS_rename, 2, (long)oldpath, (long)newpath, 0, 0, 0, 0);
++}
 diff -N -U 3 -r newlib-4.1.0-original/libgloss/riscv/sys_rmdir.c newlib-4.1.0/libgloss/riscv/sys_rmdir.c
 --- newlib-4.1.0-original/libgloss/riscv/sys_rmdir.c	1969-12-31 19:00:00.000000000 -0500
 +++ newlib-4.1.0/libgloss/riscv/sys_rmdir.c	2022-06-09 20:58:03.484213430 -0400
@@ -136,6 +151,19 @@ diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/include/reent.h newlib-4.1.0/n
  
  /* This one is not guaranteed to be available on all targets.  */
  extern int _gettimeofday_r (struct _reent *, struct timeval *__tp, void *__tzp);
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/include/sys/config.h newlib-4.1.0/newlib/libc/include/sys/config.h
+--- newlib-4.1.0-original/newlib/libc/include/sys/config.h	2020-12-18 18:50:49.000000000 -0500
++++ newlib-4.1.0/newlib/libc/include/sys/config.h	2022-06-20 21:20:13.322021163 -0400
+@@ -301,4 +301,9 @@
+ #define _MB_EXTENDED_CHARSETS_WINDOWS 1
+ #endif
+ 
++/* RLC use a real rename call */
++#ifdef __riscv
++#define HAVE_RENAME 1
++#endif
++
+ #endif /* __SYS_CONFIG_H__ */
 diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/include/sys/_types.h newlib-4.1.0/newlib/libc/include/sys/_types.h
 --- newlib-4.1.0-original/newlib/libc/include/sys/_types.h	2020-12-18 18:50:49.000000000 -0500
 +++ newlib-4.1.0/newlib/libc/include/sys/_types.h	2022-05-30 20:30:35.441080989 -0400
@@ -729,7 +757,6 @@ diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/sys/dirent.h new
 +} DIR;
 +
 +#endif
-Binary files newlib-4.1.0-original/newlib/libc/machine/riscv/sys/.dirent.h.swp and newlib-4.1.0/newlib/libc/machine/riscv/sys/.dirent.h.swp differ
 diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/machine/riscv/telldir.c newlib-4.1.0/newlib/libc/machine/riscv/telldir.c
 --- newlib-4.1.0-original/newlib/libc/machine/riscv/telldir.c	1969-12-31 19:00:00.000000000 -0500
 +++ newlib-4.1.0/newlib/libc/machine/riscv/telldir.c	2022-06-15 05:15:37.623465329 -0400
@@ -943,7 +970,6 @@ diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/reent/Makefile.in newlib-4.1.0
  lib_a-writer.o: writer.c
  	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-writer.o `test -f 'writer.c' || echo '$(srcdir)/'`writer.c
  
-Binary files newlib-4.1.0-original/newlib/libc/sys/linux/sys/.dirent.h.swp and newlib-4.1.0/newlib/libc/sys/linux/sys/.dirent.h.swp differ
 diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/syscalls/Makefile.am newlib-4.1.0/newlib/libc/syscalls/Makefile.am
 --- newlib-4.1.0-original/newlib/libc/syscalls/Makefile.am	2020-12-18 18:50:49.000000000 -0500
 +++ newlib-4.1.0/newlib/libc/syscalls/Makefile.am	2022-06-09 20:28:23.076684533 -0400
