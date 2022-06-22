@@ -19,6 +19,10 @@ main(void)
     time(&tv1);
     printf("time=%s\n", asctime(gmtime(&tv1)));
 
+    int rc = rename("/dir.1/dir.2/test.txt", "/dir.1/test2.txt");
+    printf("Rename returns %d errno=%d\n", rc, errno);
+
+#if 0
     unsigned long size = 0;
     FILE *fp = fopen("/dir.1/dir.2/test.txt", "r");
     if (fp == NULL) {
@@ -43,15 +47,27 @@ main(void)
     }
     fclose(fp);
     return EXIT_SUCCESS;
+#endif
 
 #if 0
-    DIR *dirp = opendir("/dir.1");
+    DIR *dirp = opendir("/");
     printf("opendir returns %p\n", dirp);
-    printf("sizeof(off_t) = %u\n", (unsigned)sizeof(off_t));
 
     struct dirent *e;
+    off_t o = -1;
     while ((e = readdir(dirp)) != NULL) {
         printf("d_off=%08lX name=\"%s\"\n", e->d_off, e->d_name);
+        if (o == -1) {
+            o = e->d_off;
+        }
+    }
+    printf("====\n");
+    seekdir(dirp, o);
+    while ((e = readdir(dirp)) != NULL) {
+        printf("d_off=%08lX name=\"%s\"\n", e->d_off, e->d_name);
+        if (o == -1) {
+            o = e->d_off;
+        }
     }
 
     closedir(dirp);

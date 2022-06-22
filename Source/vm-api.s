@@ -1518,7 +1518,7 @@ ecall_04:
     .word bad_ecall        ; 1151
     ; Space at $480 for calls added specifically for this VM
     .word SYS_rmdir        ; 1152 (added)
-    .word bad_ecall        ; 1153
+    .word SYS_rename       ; 1153 (added)
     .word bad_ecall        ; 1154
     .word bad_ecall        ; 1155
     .word bad_ecall        ; 1156
@@ -1671,7 +1671,7 @@ SYS_exit = _RISCV_exit
 .import SYS_getdents
 .import SYS_mkdir
 .import SYS_rmdir
-SYS_remove   = bad_ecall
+.import SYS_rename
 
 ; System calls called by Newlib but not supported here
 SYS_faccessat = bad_ecall

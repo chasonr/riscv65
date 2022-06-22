@@ -1707,6 +1707,182 @@ SYS_lstat = SYS_stat
 
 bit_shift: .byte $01, $02, $04, $08, $10, $20, $40, $80
 
+; Rename a file
+; Path to existing file is in A0
+; New path is in A1
+.global SYS_rename
+.proc SYS_rename
+
+    ; Set the address of the existing path
+    lda _RISCV_ireg_0+REG_a0
+    sta io_addr+0
+    lda _RISCV_ireg_1+REG_a0
+    sta io_addr+1
+    lda _RISCV_ireg_2+REG_a0
+    sta io_addr+2
+    lda _RISCV_ireg_3+REG_a0
+    sta io_addr+3
+
+    ; Find the file
+    jsr find_file
+    bcc :+
+        set_errno
+        rts
+    :
+
+    ; Don't rename an open file
+    jsr is_open
+    bcc :+
+        set_errno EBUSY
+        rts
+    :
+
+    ; Copy file information to rename_data
+    ldx #filedata_size
+    @copy_1:
+        lda file_data-1,x
+        sta rename_data-1,x
+    dex
+    bne @copy_1
+
+    ; Set the address of the new path
+    lda _RISCV_ireg_0+REG_a1
+    sta io_addr+0
+    lda _RISCV_ireg_1+REG_a1
+    sta io_addr+1
+    lda _RISCV_ireg_2+REG_a1
+    sta io_addr+2
+    lda _RISCV_ireg_3+REG_a1
+    sta io_addr+3
+
+    ; Look for the file
+    jsr find_file
+    ; The desired outcome is that find_file should *fail* with ENOENT,
+    ; and is_last_component should return true; that is, the path does
+    ; not name an existing file, but all components up to the last were
+    ; found.
+    bcs :+
+        ; The target name exists
+        set_errno EEXIST
+        rts
+    :
+    cmp #$100-ENOENT
+    beq :+
+        ; Error other than ENOENT
+        set_errno
+        rts
+    :
+    jsr is_last_component
+    bcc :+
+        set_errno ENOENT
+        rts
+    :
+
+    ; Set local_addr for routines that need it
+    lda #<file_data
+    sta local_addr+0
+    lda #>file_data
+    sta local_addr+1
+
+    ; Make sure we have a directory entry
+    jsr make_dir_entry
+    bcc :+
+        set_errno
+        rts
+    :
+
+    ; new_dir_entry points to an available directory entry.
+    ; rename_data+filedata::lfn_entry through rename_data+filedata::dir_entry
+    ; indicate the existing directory entry.
+    ; path_part is the last component of the new name, formatted to be placed
+    ; in the new directory entry.
+
+    ; Read the existing directory entry
+    lda rename_data+filedata::dir_entry+0
+    sta seek_location+0
+    lda rename_data+filedata::dir_entry+1
+    sta seek_location+1
+    lda rename_data+filedata::dir_entry+2
+    sta seek_location+2
+    lda rename_data+filedata::dir_entry+3
+    sta seek_location+3
+    jsr do_seek
+    bcc :+
+        set_errno
+        rts
+    :
+    lda #32
+    jsr read_bytes
+    bcc :+
+        set_errno EIO
+        rts
+    :
+
+    ; Write the new directory entry
+    lda new_dir_entry+0
+    sta seek_location+0
+    lda new_dir_entry+1
+    sta seek_location+1
+    lda new_dir_entry+2
+    sta seek_location+2
+    lda new_dir_entry+3
+    sta seek_location+3
+    jsr do_seek
+    bcc :+
+        set_errno
+        rts
+    :
+    jsr begin_write
+    ldx #0
+    @write_1:
+        lda path_part,x
+        sta CMD_DATA
+    inx
+    cpx #11
+    bcc @write_1
+    @write_2:
+        lda io_xfer,x
+        sta CMD_DATA
+    inx
+    cpx #32
+    bcc @write_2
+    jsr end_write
+    bcc :+
+        set_errno EIO
+        rts
+    :
+
+    ; Copy rename_data back to file_data
+    lda #filedata_size
+    @copy_2:
+        lda rename_data-1,x
+        sta file_data-1,x
+    dex
+    bne @copy_2
+
+    ; Remove the old directory entry
+    jsr delete_dir_entry
+    bcc :+
+        set_errno
+        rts
+    :
+
+    ; Return success
+    lda #0
+    sta _RISCV_ireg_0+REG_a0
+    sta _RISCV_ireg_1+REG_a0
+    sta _RISCV_ireg_2+REG_a0
+    sta _RISCV_ireg_3+REG_a0
+    rts
+
+.endproc
+
+.bss
+
+rename_data: .res filedata_size
+
+.code
+
 ; Convert DOS to Unix time
 ; Accept DOS time in dos_time
 ; Return Unix time in unix_time
