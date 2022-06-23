@@ -41,6 +41,7 @@ str_index: .res 1
 ; Reads and writes of 8 bits may occur on any valid address.
 
 .importzp _RISCV_pc
+.importzp _RISCV_pc_check
 .importzp _RISCV_opcode
 .importzp _RISCV_address
 .importzp _RISCV_data
@@ -71,6 +72,23 @@ str_index: .res 1
 .global _RISCV_fetch
 .proc _RISCV_fetch
 
+    ; If _RISCV_pc_check is nonzero, either the PC has crossed a 64K boundary
+    ; since the last check, or a branch instruction has been taken
+    lda _RISCV_pc_check
+    bne check_address
+
+good_address:
+
+    set_reu_address _RISCV_pc
+    set_local_address _RISCV_opcode
+    set_xfer_size_imm 4
+    do_reu_read
+
+    rts
+
+check_address:
+    lda #0
+    sta _RISCV_pc_check
     lda _RISCV_pc+3 ; Check for correct address space (main memory only)
     cmp #1
     bne bad_address
@@ -79,14 +97,7 @@ str_index: .res 1
     bcs bad_address
     lda _RISCV_pc+0 ; Check for alignment
     and #3
-    bne bad_address
-
-    set_reu_address _RISCV_pc
-    set_local_address _RISCV_opcode
-    set_xfer_size_imm 4
-    do_reu_read
-
-    rts
+    beq good_address
 
 bad_address:
     lda _RISCV_pc+0

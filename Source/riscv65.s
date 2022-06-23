@@ -35,6 +35,8 @@ _RISCV_ireg_3: .res 32  ; Persistent
 ; Program counter register
 .globalzp _RISCV_pc
 _RISCV_pc: .res 4       ; Persistent
+.globalzp _RISCV_pc_check
+_RISCV_pc_check: .res 1 ; Persistent
 
 .if RV32M
 
@@ -201,6 +203,7 @@ zp_save: .res zp_size
     sta _RISCV_pc+2
     lda #1
     sta _RISCV_pc+3
+    sta _RISCV_pc_check
 
     ; Set the stack pointer (x2) to $01000000+RISCV_STACK
     lda RISCV_STACK+0
@@ -248,11 +251,12 @@ dispatch_instruction:
     bcc pc_done         ; (2) (3)
     inc _RISCV_pc+1     ; (5) (0)
     bne pc_done         ; (2) (0)
+    inc _RISCV_pc_check ; (5) (0)
     inc _RISCV_pc+2     ; (5) (0)
     bne pc_done         ; (2) (0)
     inc _RISCV_pc+3     ; (5) (0)
     pc_done:
-.endmacro               ; total: min 13 max 31
+.endmacro               ; total: min 13 max 36
 
 ; Extract the destination register (rd) index into X
 ; Z set if this index is zero
@@ -374,6 +378,8 @@ dispatch_instruction:
     tya                    ; A = b12 b12 b12 b12 b12 b12 b12 b12
     adc _RISCV_pc+3
     sta _RISCV_pc+3
+
+    inc _RISCV_pc_check
 .endmacro
 
 .proc dispatch_LOAD
@@ -1954,6 +1960,7 @@ bad_JALR:
     sta _RISCV_pc+2
     lda imm_2   ; not imm_3
     sta _RISCV_pc+3
+    inc _RISCV_pc_check
 
     jmp RISCV_instruction
 
@@ -2004,7 +2011,8 @@ bad_JALR:
     lda rsshift4,y       ; (4) A = b20 b20 b20 b20 b20 b20 b20 b20
     adc _RISCV_pc+3      ; (3)
     sta _RISCV_pc+3      ; (3)
-                         ; total: 65
+    inc _RISCV_pc_check  ; (5)
+                         ; total: 70
 
     jmp RISCV_instruction
 .endproc
