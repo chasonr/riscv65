@@ -501,6 +501,7 @@ ELF_load(const char *filename)
         }
         switch (phdr.p_type) {
         case 0: /* PT_NULL */
+        case 0x70000003: /* PT_RISCV_ATTRIBUTES (ignored) */
             continue;
 
         case 1: /* PT_LOAD */
