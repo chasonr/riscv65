@@ -15,7 +15,7 @@ reu-load.d64: riscv65.prg reu-load.prg
 riscv65.prg: riscv65.o vm-api.o syscall.o riscv65.cfg
 	cl65 riscv65.o vm-api.o syscall.o -C riscv65.cfg -o riscv65.prg -vm --mapfile riscv65.map
 
-riscv65.o: riscv65.s registers.inc
+riscv65.o: riscv65.s reu.inc registers.inc vm-api.inc
 	ca65 riscv65.s -o riscv65.o -t c64 -l riscv65.lst
 
 vm-api.o: vm-api.s registers.inc memory.inc kernal.inc reu.inc

@@ -68,27 +68,17 @@ str_index: .res 1
 
 .endproc
 
-; Fetch an opcode from address _RISCV_pc into _RISCV_opcode
-.global _RISCV_fetch
-.proc _RISCV_fetch
+; Check the address in _RISCV_pc
+; Called from the RISCV_fetch macro
+.global RISCV_check_address
+.proc RISCV_check_address
 
-    ; If _RISCV_pc_check is nonzero, either the PC has crossed a 64K boundary
-    ; since the last check, or a branch instruction has been taken
-    lda _RISCV_pc_check
-    bne check_address
-
-good_address:
-
-    set_reu_address _RISCV_pc
-    set_local_address _RISCV_opcode
-    set_xfer_size_imm 4
-    do_reu_read
-
-    rts
-
-check_address:
+    ; Reset the check flag
     lda #0
     sta _RISCV_pc_check
+
+    ; Check that we have a valid execution address
+
     lda _RISCV_pc+3 ; Check for correct address space (main memory only)
     cmp #1
     bne bad_address
@@ -97,8 +87,12 @@ check_address:
     bcs bad_address
     lda _RISCV_pc+0 ; Check for alignment
     and #3
-    beq good_address
+    bne bad_address
 
+    ; We're OK
+    rts
+
+    ; Oops
 bad_address:
     lda _RISCV_pc+0
     sta _RISCV_address+0

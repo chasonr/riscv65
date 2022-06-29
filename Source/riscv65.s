@@ -11,6 +11,7 @@ RISCV_ENTRY = $07F0
 RISCV_STACK = $07F7
 
 .include "registers.inc"
+.include "vm-api.inc"
 
 ; Processor state includes the integer registers and the program counter
 ; Registers are stored in a 32-byte aligned segment, so that indexing does not
@@ -119,7 +120,6 @@ zp_save: .res zp_size
 .import _RISCV_api_init
 .import _RISCV_syscall_init
 .import _RISCV_syscall_exit
-.import _RISCV_fetch
 .import _RISCV_read_8
 .import _RISCV_read_16
 .import _RISCV_read_32
@@ -225,7 +225,7 @@ zp_save: .res zp_size
 
 RISCV_instruction:
     ; Fetch opcode
-    jsr _RISCV_fetch
+    RISCV_fetch
 
 dispatch_instruction:
     ; Decode the lower seven bits
@@ -1426,7 +1426,10 @@ bad_opcode:
     cmp rs1_reg
     beq end_instruction
     cmp rs2_reg
-    beq end_instruction
+    bne :+
+    end_instruction:
+        jmp RISCV_instruction
+    :
 
     ; Save the old opcode, modify funct3 to match the expected MUL
     ; and mask off rd
@@ -1440,7 +1443,7 @@ bad_opcode:
     sta old_opcode+2
 
     ; Fetch the next opcode
-    jsr _RISCV_fetch
+    RISCV_fetch
 
     ; If the opcode matches the expected MUL, use the computed low word
     lda _RISCV_opcode+0
@@ -1472,7 +1475,6 @@ bad_opcode:
     end_low_word:
     advance_pc 4
 
-end_instruction:
     jmp RISCV_instruction
 
     ; Run the instruction that we just fetched
@@ -1579,7 +1581,10 @@ do_instruction:
     cmp rs1_reg
     beq end_instruction
     cmp rs2_reg
-    beq end_instruction
+    bne :+
+    end_instruction:
+        jmp RISCV_instruction
+    :
 
     ; Save the old opcode, modify funct3 to match the expected REM or REMU,
     ; and mask off rd
@@ -1594,7 +1599,7 @@ do_instruction:
     sta old_opcode+2
 
     ; Fetch the next opcode
-    jsr _RISCV_fetch
+    RISCV_fetch
 
     ; If the opcode matches the expected REM or REMU, use the computed remainder
     lda _RISCV_opcode+0
@@ -1626,7 +1631,6 @@ do_instruction:
     end_remainder:
     advance_pc 4
 
-end_instruction:
     jmp RISCV_instruction
 
     ; Run the instruction that we just fetched
