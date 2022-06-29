@@ -4653,41 +4653,63 @@ zero_divide:
 .proc divide_unsigned
 
     ; Choose one of twelve optimized divide routines
+    lda div_op2_3
+    beq op2_3_bytes
 
-    lda #0
-    ldx div_op1_3
-    cpx #1
-    rol a
-    ldx div_op1_2
-    cpx #1
-    rol a
-    ldx div_op1_1
-    cpx #1
-    rol a
-    ldx div_op1_0
-    cpx #1
-    rol a
-    ldx div_op2_3
-    cpx #1
-    rol a
-    ldx div_op2_2
-    cpx #1
-    rol a
-    ldx div_op2_1
-    cpx #1
-    rol a
-    ldx div_op2_0
-    cpx #1
-    rol a
-    asl a
-    bcs jump2
-        sta jump_lo+1         ; self-modifying code here
-        jump_lo:
-        jmp (divide_dispatch) ; actually (divide_dispatch,a)
-    jump2:
-        sta jump_hi+1         ; self-modifying code here
-        jump_hi:
-        jmp (divide_dispatch+256) ; actually (divide_dispatch+256,a)
+        lda div_op1_3
+        bne div_44
+        beq div_small_large
+
+    op2_3_bytes:
+    lda div_op2_2
+    beq op2_2_bytes
+
+        lda div_op1_3
+        bne div_43
+        lda div_op1_2
+        bne div_33
+        beq div_small_large
+
+    op2_2_bytes:
+    lda div_op2_1
+    beq op2_1_bytes
+
+        lda div_op1_3
+        bne div_42
+        lda div_op1_2
+        bne div_32
+        lda div_op1_1
+        bne div_22
+        beq div_small_large
+
+    op2_1_bytes:
+    lda div_op2_0
+    beq op2_0_bytes
+
+        lda div_op1_3
+        bne div_41
+        lda div_op1_2
+        bne div_31
+        lda div_op1_1
+        bne div_21
+        lda div_op1_0
+        bne div_11
+        beq div_small_large
+
+    op2_0_bytes:
+    jmp divide_x0
+
+    div_44: jmp divide_44
+    div_43: jmp divide_43
+    div_42: jmp divide_42
+    div_41: jmp divide_41
+    div_33: jmp divide_33
+    div_32: jmp divide_32
+    div_31: jmp divide_31
+    div_22: jmp divide_22
+    div_21: jmp divide_21
+    div_11: jmp divide_11
+    div_small_large: jmp divide_small_large
 
 .endproc
 
@@ -6059,269 +6081,6 @@ sra_dispatch:
         .word sra_30
         .word sra_31
     .endrep
-
-.if RV32M
-
-; Dispatch table for divide_common
-divide_dispatch:
-    .word divide_x0
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_x0
-    .word divide_11
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_x0
-    .word divide_21
-    .word divide_22
-    .word divide_22
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_x0
-    .word divide_21
-    .word divide_22
-    .word divide_22
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_x0
-    .word divide_31
-    .word divide_32
-    .word divide_32
-    .word divide_33
-    .word divide_33
-    .word divide_33
-    .word divide_33
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_x0
-    .word divide_31
-    .word divide_32
-    .word divide_32
-    .word divide_33
-    .word divide_33
-    .word divide_33
-    .word divide_33
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_x0
-    .word divide_31
-    .word divide_32
-    .word divide_32
-    .word divide_33
-    .word divide_33
-    .word divide_33
-    .word divide_33
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_x0
-    .word divide_31
-    .word divide_32
-    .word divide_32
-    .word divide_33
-    .word divide_33
-    .word divide_33
-    .word divide_33
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_small_large
-    .word divide_x0
-    .word divide_41
-    .word divide_42
-    .word divide_42
-    .word divide_43
-    .word divide_43
-    .word divide_43
-    .word divide_43
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_x0
-    .word divide_41
-    .word divide_42
-    .word divide_42
-    .word divide_43
-    .word divide_43
-    .word divide_43
-    .word divide_43
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_x0
-    .word divide_41
-    .word divide_42
-    .word divide_42
-    .word divide_43
-    .word divide_43
-    .word divide_43
-    .word divide_43
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_x0
-    .word divide_41
-    .word divide_42
-    .word divide_42
-    .word divide_43
-    .word divide_43
-    .word divide_43
-    .word divide_43
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_x0
-    .word divide_41
-    .word divide_42
-    .word divide_42
-    .word divide_43
-    .word divide_43
-    .word divide_43
-    .word divide_43
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_x0
-    .word divide_41
-    .word divide_42
-    .word divide_42
-    .word divide_43
-    .word divide_43
-    .word divide_43
-    .word divide_43
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_x0
-    .word divide_41
-    .word divide_42
-    .word divide_42
-    .word divide_43
-    .word divide_43
-    .word divide_43
-    .word divide_43
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_x0
-    .word divide_41
-    .word divide_42
-    .word divide_42
-    .word divide_43
-    .word divide_43
-    .word divide_43
-    .word divide_43
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-    .word divide_44
-
-.endif ; RV32M
 
 ; Shift tables:
 
