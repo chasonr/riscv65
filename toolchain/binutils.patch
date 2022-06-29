@@ -1,6 +1,6 @@
-diff -U 3 -r binutils-2.37-old/ld/emulparams/elf32lriscv-defs.sh binutils-2.37/ld/emulparams/elf32lriscv-defs.sh
---- binutils-2.37-old/ld/emulparams/elf32lriscv-defs.sh	2021-07-08 07:37:20.000000000 -0400
-+++ binutils-2.37/ld/emulparams/elf32lriscv-defs.sh	2021-11-03 19:09:47.626574652 -0400
+diff -U 3 -r binutils-2.38-original/ld/emulparams/elf32lriscv-defs.sh binutils-2.38/ld/emulparams/elf32lriscv-defs.sh
+--- binutils-2.38-original/ld/emulparams/elf32lriscv-defs.sh	2022-01-22 07:14:09.000000000 -0500
++++ binutils-2.38/ld/emulparams/elf32lriscv-defs.sh	2022-06-28 22:05:05.458964533 -0400
 @@ -27,7 +27,7 @@
  esac
  
@@ -10,10 +10,10 @@ diff -U 3 -r binutils-2.37-old/ld/emulparams/elf32lriscv-defs.sh binutils-2.37/l
  MAXPAGESIZE="CONSTANT (MAXPAGESIZE)"
  COMMONPAGESIZE="CONSTANT (COMMONPAGESIZE)"
  
-diff -U 3 -r binutils-2.37-old/ld/scripttempl/elf.sc binutils-2.37/ld/scripttempl/elf.sc
---- binutils-2.37-old/ld/scripttempl/elf.sc	2021-07-08 07:37:20.000000000 -0400
-+++ binutils-2.37/ld/scripttempl/elf.sc	2021-11-04 00:22:21.096094748 -0400
-@@ -609,6 +609,7 @@
+diff -U 3 -r binutils-2.38-original/ld/scripttempl/elf.sc binutils-2.38/ld/scripttempl/elf.sc
+--- binutils-2.38-original/ld/scripttempl/elf.sc	2022-01-22 07:14:09.000000000 -0500
++++ binutils-2.38/ld/scripttempl/elf.sc	2022-06-28 22:05:05.462964444 -0400
+@@ -613,6 +613,7 @@
  
    ${RELOCATING+/* Adjust the address for the data segment.  We want to adjust up to
       the same address within the page on the next page up.  */}

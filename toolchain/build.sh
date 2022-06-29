@@ -4,17 +4,27 @@ PREFIX=$HOME/riscv-gcc
 TARGET=riscv-elf
 
 export PATH=$PREFIX/bin:$PATH
-if [ "`uname`" == "Darwin" ]; then
+if [ "`uname`" = "Darwin" ]; then
     export C_INCLUDE_PATH=`brew --prefix`/include
     export CPLUS_INCLUDE_PATH=`brew --prefix`/include
     export LIBRARY_PATH=`brew --prefix`/lib
 fi
 
-BINUTILS_VERSION=2.37
-GCC_VERSION=11.2.0
+BINUTILS_VERSION=2.38
+GCC_VERSION=12.1.0
 NEWLIB_VERSION=4.1.0
 
 set -e
+
+if [ "$(sha256sum binutils-${BINUTILS_VERSION}.tar.xz | awk '{print $1}')" != "e316477a914f567eccc34d5d29785b8b0f5a10208d36bbacedcc39048ecfe024" ]; then
+    wget https://ftpmirror.gnu.org/binutils/binutils-${BINUTILS_VERSION}.tar.xz
+fi
+if [ "$(sha256sum gcc-${GCC_VERSION}.tar.xz | awk '{print $1}')" != "62fd634889f31c02b64af2c468f064b47ad1ca78411c45abe6ac4b5f8dd19c7b" ]; then
+    wget https://ftpmirror.gnu.org/gcc/gcc-${GCC_VERSION}/gcc-${GCC_VERSION}.tar.xz
+fi
+if [ "$(sha256sum newlib-${NEWLIB_VERSION}.tar.gz | awk '{print $1}')" != "f296e372f51324224d387cc116dc37a6bd397198756746f93a2b02e9a5d40154" ]; then
+    wget ftp://sourceware.org/pub/newlib/newlib-${NEWLIB_VERSION}.tar.gz
+fi
 
 rm -rf build-binutils binutils-${BINUTILS_VERSION}
 rm -rf build-gcc gcc-${GCC_VERSION}
@@ -31,7 +41,7 @@ make install
 cd ..
 
 tar xvf gcc-${GCC_VERSION}.tar.xz
-if [ "`uname`" == "Darwin" ]; then
+if [ "`uname`" = "Darwin" ]; then
     patch -p0 -i mac-gcc.patch
 fi
 mkdir build-gcc
