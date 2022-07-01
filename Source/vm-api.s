@@ -775,9 +775,32 @@ bad_opcode_str:
 .proc _RISCV_ECALL
 
     ; ECALL selector is in A7 (x17)
-    ; All defined ECALLs have the two upper bytes equal to zero
-    lda _RISCV_ireg_2+REG_a7
-    ora _RISCV_ireg_3+REG_a7
+    lda _RISCV_ireg_3+REG_a7
+    bpl :+
+        ; Work in progress: provide for user-definable 6502 code at $C000
+        jmp $C000
+    :
+
+    ; ECALLs from libkernal.a are in range $7F000000-$7F0000FF
+    cmp #$7F
+    bne newlib_call
+
+        ; Check bytes 1 and 2
+        lda _RISCV_ireg_1+REG_a7
+        ora _RISCV_ireg_2+REG_a7
+        bne no_table
+
+        ; Jump to appropriate Kernal system call
+        lda _RISCV_ireg_0+REG_a7
+        asl a
+        bcs no_table
+        sta @jump_0+1  ; self-modifying code
+        @jump_0:
+        jmp (ecall_kernal) ; actually ecall_kernal,a
+
+    newlib_call:
+    ; ECALLs from Newlib have the two upper bytes equal to zero
+    ora _RISCV_ireg_2+REG_a7
     bne no_table
 
     ; A <- A7 byte 0
@@ -1130,7 +1153,7 @@ hexdigit: .byte "0123456789ABCDEF"
 .segment "PAGEALIGN"
 .align 256
 
-; A7 byte 0 == 0
+; A7 byte 1 == 0
 
 ecall_00:
     .word bad_ecall        ;   0
@@ -1390,7 +1413,7 @@ ecall_00:
     .word bad_ecall        ; 254
     .word bad_ecall        ; 255
 
-; A7 byte 0 == $04    
+; A7 byte 1 == $04    
 
 ecall_04:
     .word SYS_open         ; 1024 (supported)
@@ -1651,6 +1674,137 @@ ecall_04:
     .word bad_ecall        ; 1278
     .word bad_ecall        ; 1279
 
+; Kernal system calls
+ecall_kernal:
+    .word CBM_acptr        ; 0x7F000000
+    .word CBM_chkin        ; 0x7F000001
+    .word CBM_chkout       ; 0x7F000002
+    .word CBM_chrin        ; 0x7F000003
+    .word CBM_chrout       ; 0x7F000004
+    .word CBM_cint         ; 0x7F000005
+    .word CBM_ciout        ; 0x7F000006
+    .word CBM_clall        ; 0x7F000007
+    .word CBM_close        ; 0x7F000008
+    .word CBM_clrchn       ; 0x7F000009
+    .word CBM_getin        ; 0x7F00000A
+    .word CBM_ioinit       ; 0x7F00000B
+    .word CBM_listen       ; 0x7F00000C
+    .word CBM_open         ; 0x7F00000D
+    .word CBM_get_cursor   ; 0x7F00000E
+    .word CBM_set_cursor   ; 0x7F00000F
+    .word CBM_rdtim        ; 0x7F000010
+    .word CBM_readst       ; 0x7F000011
+    .word CBM_second       ; 0x7F000012
+    .word CBM_settim       ; 0x7F000013
+    .word CBM_stop         ; 0x7F000014
+    .word CBM_talk         ; 0x7F000015
+    .word CBM_tksa         ; 0x7F000016
+    .word CBM_unlsn        ; 0x7F000017
+    .word CBM_untlk        ; 0x7F000018
+    .word bad_ecall        ; 0x7F000019
+    .word bad_ecall        ; 0x7F00001A
+    .word bad_ecall        ; 0x7F00001B
+    .word bad_ecall        ; 0x7F00001C
+    .word bad_ecall        ; 0x7F00001D
+    .word bad_ecall        ; 0x7F00001E
+    .word bad_ecall        ; 0x7F00001F
+    .word bad_ecall        ; 0x7F000020
+    .word bad_ecall        ; 0x7F000021
+    .word bad_ecall        ; 0x7F000022
+    .word bad_ecall        ; 0x7F000023
+    .word bad_ecall        ; 0x7F000024
+    .word bad_ecall        ; 0x7F000025
+    .word bad_ecall        ; 0x7F000026
+    .word bad_ecall        ; 0x7F000027
+    .word bad_ecall        ; 0x7F000028
+    .word bad_ecall        ; 0x7F000029
+    .word bad_ecall        ; 0x7F00002A
+    .word bad_ecall        ; 0x7F00002B
+    .word bad_ecall        ; 0x7F00002C
+    .word bad_ecall        ; 0x7F00002D
+    .word bad_ecall        ; 0x7F00002E
+    .word bad_ecall        ; 0x7F00002F
+    .word bad_ecall        ; 0x7F000030
+    .word bad_ecall        ; 0x7F000031
+    .word bad_ecall        ; 0x7F000032
+    .word bad_ecall        ; 0x7F000033
+    .word bad_ecall        ; 0x7F000034
+    .word bad_ecall        ; 0x7F000035
+    .word bad_ecall        ; 0x7F000036
+    .word bad_ecall        ; 0x7F000037
+    .word bad_ecall        ; 0x7F000038
+    .word bad_ecall        ; 0x7F000039
+    .word bad_ecall        ; 0x7F00003A
+    .word bad_ecall        ; 0x7F00003B
+    .word bad_ecall        ; 0x7F00003C
+    .word bad_ecall        ; 0x7F00003D
+    .word bad_ecall        ; 0x7F00003E
+    .word bad_ecall        ; 0x7F00003F
+    .word bad_ecall        ; 0x7F000040
+    .word bad_ecall        ; 0x7F000041
+    .word bad_ecall        ; 0x7F000042
+    .word bad_ecall        ; 0x7F000043
+    .word bad_ecall        ; 0x7F000044
+    .word bad_ecall        ; 0x7F000045
+    .word bad_ecall        ; 0x7F000046
+    .word bad_ecall        ; 0x7F000047
+    .word bad_ecall        ; 0x7F000048
+    .word bad_ecall        ; 0x7F000049
+    .word bad_ecall        ; 0x7F00004A
+    .word bad_ecall        ; 0x7F00004B
+    .word bad_ecall        ; 0x7F00004C
+    .word bad_ecall        ; 0x7F00004D
+    .word bad_ecall        ; 0x7F00004E
+    .word bad_ecall        ; 0x7F00004F
+    .word bad_ecall        ; 0x7F000050
+    .word bad_ecall        ; 0x7F000051
+    .word bad_ecall        ; 0x7F000052
+    .word bad_ecall        ; 0x7F000053
+    .word bad_ecall        ; 0x7F000054
+    .word bad_ecall        ; 0x7F000055
+    .word bad_ecall        ; 0x7F000056
+    .word bad_ecall        ; 0x7F000057
+    .word bad_ecall        ; 0x7F000058
+    .word bad_ecall        ; 0x7F000059
+    .word bad_ecall        ; 0x7F00005A
+    .word bad_ecall        ; 0x7F00005B
+    .word bad_ecall        ; 0x7F00005C
+    .word bad_ecall        ; 0x7F00005D
+    .word bad_ecall        ; 0x7F00005E
+    .word bad_ecall        ; 0x7F00005F
+    .word bad_ecall        ; 0x7F000060
+    .word bad_ecall        ; 0x7F000061
+    .word bad_ecall        ; 0x7F000062
+    .word bad_ecall        ; 0x7F000063
+    .word bad_ecall        ; 0x7F000064
+    .word bad_ecall        ; 0x7F000065
+    .word bad_ecall        ; 0x7F000066
+    .word bad_ecall        ; 0x7F000067
+    .word bad_ecall        ; 0x7F000068
+    .word bad_ecall        ; 0x7F000069
+    .word bad_ecall        ; 0x7F00006A
+    .word bad_ecall        ; 0x7F00006B
+    .word bad_ecall        ; 0x7F00006C
+    .word bad_ecall        ; 0x7F00006D
+    .word bad_ecall        ; 0x7F00006E
+    .word bad_ecall        ; 0x7F00006F
+    .word bad_ecall        ; 0x7F000070
+    .word bad_ecall        ; 0x7F000071
+    .word bad_ecall        ; 0x7F000072
+    .word bad_ecall        ; 0x7F000073
+    .word bad_ecall        ; 0x7F000074
+    .word bad_ecall        ; 0x7F000075
+    .word bad_ecall        ; 0x7F000076
+    .word bad_ecall        ; 0x7F000077
+    .word bad_ecall        ; 0x7F000078
+    .word bad_ecall        ; 0x7F000079
+    .word bad_ecall        ; 0x7F00007A
+    .word bad_ecall        ; 0x7F00007B
+    .word bad_ecall        ; 0x7F00007C
+    .word bad_ecall        ; 0x7F00007D
+    .word bad_ecall        ; 0x7F00007E
+    .word bad_ecall        ; 0x7F00007F
+
 ; System calls supported by Newlib
 
 .import SYS_openat
@@ -1704,3 +1858,30 @@ SYS_mremap       = bad_ecall
 SYS_mmap         = bad_ecall
 SYS_time         = bad_ecall
 SYS_getmainvars  = bad_ecall
+
+; Kernal system calls
+.import CBM_acptr
+.import CBM_chkin
+.import CBM_chkout
+.import CBM_chrin
+.import CBM_chrout
+.import CBM_cint
+.import CBM_ciout
+.import CBM_clall
+.import CBM_close
+.import CBM_clrchn
+.import CBM_getin
+.import CBM_ioinit
+.import CBM_listen
+.import CBM_open
+.import CBM_get_cursor
+.import CBM_set_cursor
+.import CBM_rdtim
+.import CBM_readst
+.import CBM_second
+.import CBM_settim
+.import CBM_stop
+.import CBM_talk
+.import CBM_tksa
+.import CBM_unlsn
+.import CBM_untlk

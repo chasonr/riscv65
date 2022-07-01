@@ -21,6 +21,7 @@ RISCV_break: .res 4
 RISCV_min_break: .res 4
 
 ; Address and size for I/O
+.global io_addr
 io_addr: .res 4
 io_size: .res 4
 
@@ -61,6 +62,7 @@ io_xfer: .res 512
 
 ; Read file paths into this area
 filename_max = 1024 ; FILENAME_MAX from Newlib stdio.h
+.global fs_path
 fs_path: .res filename_max+1
 
 ; File handle being accessed
@@ -6109,6 +6111,7 @@ error:
 ; Return C clear if OK. If error, C is set and -errno is in A.
 ; Possible errno values are ENAMETOOLONG and EFAULT.
 
+.global read_path ; Kernal calls use this
 .proc read_path
 
     ; Set up the transfer area

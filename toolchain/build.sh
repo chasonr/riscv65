@@ -61,3 +61,8 @@ cd build-newlib
 make
 make install
 cd ..
+
+# Build and install libkernal
+make -C kernallib
+cp -p kernallib/kernal.h ${PREFIX}/${TARGET}/include/
+cp -p kernallib/libkernal.a ${PREFIX}/${TARGET}/lib/

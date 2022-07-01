@@ -12,8 +12,8 @@ reu-load.d64: riscv65.prg reu-load.prg
 #                 riscv65.prg, the RISC-V emulation runtime                  #
 ##############################################################################
 
-riscv65.prg: riscv65.o vm-api.o syscall.o riscv65.cfg
-	cl65 riscv65.o vm-api.o syscall.o -C riscv65.cfg -o riscv65.prg -vm --mapfile riscv65.map
+riscv65.prg: riscv65.o vm-api.o syscall.o kernal.o riscv65.cfg
+	cl65 riscv65.o vm-api.o syscall.o kernal.o -C riscv65.cfg -o riscv65.prg -vm --mapfile riscv65.map
 
 riscv65.o: riscv65.s reu.inc registers.inc vm-api.inc
 	ca65 riscv65.s -o riscv65.o -t c64 -l riscv65.lst
@@ -23,6 +23,9 @@ vm-api.o: vm-api.s registers.inc memory.inc kernal.inc reu.inc
 
 syscall.o: syscall.s registers.inc kernal.inc errno.inc reu.inc
 	ca65 syscall.s -o syscall.o -t c64 -l syscall.lst
+
+kernal.o: kernal.s errno.inc registers.inc kernal.inc
+	ca65 kernal.s -o kernal.o -t c64 -l kernal.lst
 
 ##############################################################################
 #                          riscv-vm, a test program                          #
@@ -65,7 +68,7 @@ chain.bin: chain.s
 ##############################################################################
 
 hello: hello.c
-	riscv-elf-gcc -Wall -O2 hello.c -o hello
+	riscv-elf-gcc -Wall -O2 hello.c -o hello -lkernal
 
 ##############################################################################
 
