@@ -57,7 +57,8 @@ tar xvf newlib-${NEWLIB_VERSION}.tar.gz
 patch -p0 -i newlib.patch
 mkdir build-newlib
 cd build-newlib
-../newlib-${NEWLIB_VERSION}/configure --prefix=$HOME/riscv-gcc --target=riscv-elf
+../newlib-${NEWLIB_VERSION}/configure --prefix=$HOME/riscv-gcc \
+    --target=riscv-elf --enable-newlib-io-c99-formats
 make
 make install
 cd ..
