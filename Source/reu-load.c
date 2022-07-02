@@ -452,6 +452,7 @@ ELF_load(const char *filename)
     uint32_t riscv_fence;
     uint32_t fence2;
     uint32_t riscv_stack;
+    uint32_t stack_size;
     size_t len;
     uint8_t buf[8];
     uint32_t argv0;
@@ -580,13 +581,39 @@ ELF_load(const char *filename)
     dos_close(target);
 
     /* Write the initial stack (parameters to main) */
-    riscv_stack = 0x02000000;
-    /* File name */
-    len = strlen(filename) + 1;
-    riscv_stack = (riscv_stack - len) & 0xFFFFFFFC;
-    reu_write(riscv_stack - 0x01000000, filename, len);
-    argv0 = riscv_stack;
+    /* First, determine the size: */
+    /* Length of file name, plus one */
+    stack_size = strlen(filename)+1;
+    /* 16 bytes: argc (4), argv (4), argv[0] (4), argv[1] (4) */
+    stack_size += 16;
+    /* Round up to multiple of 16 */
+    stack_size = (stack_size + 15) & 0xFFFFFFF0;
+
+    /* Initial stack pointer */
+    riscv_stack = 0x02000000 - stack_size;
+    *(uint8_t *)(RISCV_STACK+0) = (riscv_stack >>  0) & 0xFF;
+    *(uint8_t *)(RISCV_STACK+1) = (riscv_stack >>  8) & 0xFF;
+    *(uint8_t *)(RISCV_STACK+2) = (riscv_stack >> 16) & 0xFF;
+
+    /* argc */
+    buf[0] = 1;
+    buf[1] = 0;
+    buf[2] = 0;
+    buf[3] = 0;
+    reu_write(riscv_stack - 0x01000000, buf, 4);
+    riscv_stack += 4;
+
+    /* argv address */
+    argv = riscv_stack + 4;
+    buf[0] = (argv >>  0) & 0xFF;
+    buf[1] = (argv >>  8) & 0xFF;
+    buf[2] = (argv >> 16) & 0xFF;
+    buf[3] = (argv >> 24) & 0xFF;
+    reu_write(riscv_stack - 0x01000000, buf, 4);
+    riscv_stack += 4;
+
     /* argv contents */
+    argv0 = riscv_stack + 8;
     buf[0] = (argv0 >>  0) & 0xFF;
     buf[1] = (argv0 >>  8) & 0xFF;
     buf[2] = (argv0 >> 16) & 0xFF;
@@ -595,25 +622,15 @@ ELF_load(const char *filename)
     buf[5] = 0;
     buf[6] = 0;
     buf[7] = 0;
-    riscv_stack -= 8;
     reu_write(riscv_stack - 0x01000000, buf, 8);
-    argv = riscv_stack;
-    /* argv address */
-    riscv_stack -= 4;
-    buf[0] = (argv >>  0) & 0xFF;
-    buf[1] = (argv >>  8) & 0xFF;
-    buf[2] = (argv >> 16) & 0xFF;
-    buf[3] = (argv >> 24) & 0xFF;
-    reu_write(riscv_stack - 0x01000000, buf, 4);
-    /* argc */
-    riscv_stack -= 4;
-    buf[0] = 1;
-    buf[1] = 0;
-    buf[2] = 0;
-    buf[3] = 0;
-    reu_write(riscv_stack - 0x01000000, buf, 4);
+    riscv_stack += 8;
+
+    /* File name */
+    len = strlen(filename) + 1;
+    reu_write(riscv_stack - 0x01000000, filename, len);
 
     /* Set up the parameters for the 6502 code: */
+    /* Stack pointer is set above */
     /* Entry point */
     *(uint8_t *)(RISCV_ENTRY+0) = (riscv_entry >>  0) & 0xFF;
     *(uint8_t *)(RISCV_ENTRY+1) = (riscv_entry >>  8) & 0xFF;
@@ -624,10 +641,6 @@ ELF_load(const char *filename)
     *(uint8_t *)(RISCV_BREAK+0) = (riscv_break >>  0) & 0xFF;
     *(uint8_t *)(RISCV_BREAK+1) = (riscv_break >>  8) & 0xFF;
     *(uint8_t *)(RISCV_BREAK+2) = (riscv_break >> 16) & 0xFF;
-    /* Stack pointer */
-    *(uint8_t *)(RISCV_STACK+0) = (riscv_stack >>  0) & 0xFF;
-    *(uint8_t *)(RISCV_STACK+1) = (riscv_stack >>  8) & 0xFF;
-    *(uint8_t *)(RISCV_STACK+2) = (riscv_stack >> 16) & 0xFF;
 
     return true;
 
