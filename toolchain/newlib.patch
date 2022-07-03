@@ -970,6 +970,41 @@ diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/reent/Makefile.in newlib-4.1.0
  lib_a-writer.o: writer.c
  	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(lib_a_CFLAGS) $(CFLAGS) -c -o lib_a-writer.o `test -f 'writer.c' || echo '$(srcdir)/'`writer.c
  
+diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/stdio/vfprintf.c newlib-4.1.0/newlib/libc/stdio/vfprintf.c
+--- newlib-4.1.0-original/newlib/libc/stdio/vfprintf.c	2020-12-18 18:50:49.000000000 -0500
++++ newlib-4.1.0/newlib/libc/stdio/vfprintf.c	2022-07-02 18:47:27.794216032 -0400
+@@ -505,7 +505,6 @@
+ 			      int, int *, int *, char **);
+ 
+ #  define _PRINTF_FLOAT_TYPE double
+-#  define _DTOA_R _dtoa_r
+ #  define FREXP frexp
+ 
+ # else /* !_NO_LONGDBL */
+@@ -516,7 +515,6 @@
+ extern int _ldcheck (_LONG_DOUBLE *);
+ 
+ #  define _PRINTF_FLOAT_TYPE _LONG_DOUBLE
+-#  define _DTOA_R _ldtoa_r
+ /* FIXME - frexpl is not yet supported; and cvt infloops if (double)f
+    converts a finite value into infinity.  */
+ /* #  define FREXP frexpl */
+@@ -1870,7 +1868,14 @@
+ 		mode = 2;		/* ndigits significant digits */
+ 	}
+ 
+-	digits = _DTOA_R (data, value, mode, ndigits, decpt, &dsgn, &rve);
++#ifndef _NO_LONGDBL
++	if (flags & LONGDBL) {
++	    digits = _ldtoa_r (data, value, mode, ndigits, decpt, &dsgn, &rve);
++	} else
++#endif
++	{
++	    digits = _dtoa_r (data, (double) value, mode, ndigits, decpt, &dsgn, &rve);
++	}
+ 
+ 	if ((ch != 'g' && ch != 'G') || flags & ALT) {	/* Print trailing zeros */
+ 		bp = digits + ndigits;
 diff -N -U 3 -r newlib-4.1.0-original/newlib/libc/syscalls/Makefile.am newlib-4.1.0/newlib/libc/syscalls/Makefile.am
 --- newlib-4.1.0-original/newlib/libc/syscalls/Makefile.am	2020-12-18 18:50:49.000000000 -0500
 +++ newlib-4.1.0/newlib/libc/syscalls/Makefile.am	2022-06-09 20:28:23.076684533 -0400
