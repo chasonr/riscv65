@@ -58,7 +58,11 @@ patch -p0 -i newlib.patch
 mkdir build-newlib
 cd build-newlib
 ../newlib-${NEWLIB_VERSION}/configure --prefix=$HOME/riscv-gcc \
-    --target=riscv-elf --enable-newlib-io-c99-formats
+    --target=riscv-elf \
+    --enable-newlib-io-pos-args \
+    --enable-newlib-io-c99-formats \
+    --enable-newlib-io-long-long \
+    --enable-newlib-io-long-double
 make
 make install
 cd ..
