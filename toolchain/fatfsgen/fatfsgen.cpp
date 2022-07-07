@@ -1348,20 +1348,15 @@ void FS_specification::write_fat(std::ofstream& outfp)
 void FS_specification::write_root_dir(std::ofstream& outfp)
 {
     auto pos = outfp.tellp();
-    std::cout << std::hex << "pos1=" << outfp.tellp() << "\n";
     for (auto i = this->root_dir.directory.cbegin();
          i != this->root_dir.directory.cend(); ++i) {
         outfp.write(reinterpret_cast<const char *>(&(*i)), 32);
     }
 
     auto pos2 = outfp.tellp();
-    std::cout << std::hex << "pos2=" << outfp.tellp() << "\n";
     auto size = this->root_dir_size * 32 + this->sector_size - 1;
     size -= size % this->sector_size;
-    std::cout << "size=" << size << "\n";
     write_zeros(outfp, size - (pos2 - pos));
-    std::cout << std::hex << "pos3=" << outfp.tellp() << "\n";
-    std::cout << std::dec;
 }
 
 // Write a directory entry and all subdirectory contents
