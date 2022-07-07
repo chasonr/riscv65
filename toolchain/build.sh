@@ -71,3 +71,7 @@ cd ..
 make -C kernallib
 cp -p kernallib/kernal.h ${PREFIX}/${TARGET}/include/
 cp -p kernallib/libkernal.a ${PREFIX}/${TARGET}/lib/
+
+# Build and install fatfsgen
+make -C fatfsgen
+cp -p fatfsgen/fatfsgen ${PREFIX}/bin

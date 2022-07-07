@@ -1,0 +1,96 @@
+The fatfsgen tool reads a specification file formatted as follows, to determine
+the contents of the generated volume.
+
+The specification file contains one or more lines, describing the properties
+of the volume and the files and directories that may be placed on it. Each
+line begins with a keyword and may contain one or more parameters.
+
+Lines beginning with #, possibly preceded by whitespace, are comments.
+
+In the description below, each section begins with a keyword. Keywords are
+given in uppercase, but are not case sensitive when read. Text enclosed in
+<angle brackets> describes a parameter. Parameters are case insensitive unless
+otherwise specified. Descriptions of the keyword are formatted as comments,
+beginning with #.
+
+Path names shall be coded in UTF-8.
+
+The resulting volume conformes to the FAT file system specification, published
+by Microsoft at
+https://msdn.microsoft.com/en-us/windows/hardware/gg463080.aspx .
+
+==============================================================================
+
+VOLUME "<path>"
+
+# Sets the name of the volume as generated in the local file sytem.
+#
+# Example:
+# VOLUME "test-volume.img"
+
+FSTYPE <type>
+
+# Sets the file sytem type. <type> may be FAT12, FAT16 or FAT32. If this is not
+# present, a type is automatically selected based on the capacity of the
+# volume.
+
+SECTOR_SIZE <size>
+
+# Sets the sector size in bytes for the volume. <size> may be 512, 1024, 2048,
+# 4096, 1K, 2K or 4K. If this is not present, the sector size is 512 bytes.
+
+CLUSTER_SIZE <size>
+
+# Sets the cluster size in bytes for the volume. <size> may be 512, 1024, 2048,
+# 4096, 8192, 16384, 32768, 1K, 2K, 4K, 8K, 16K or 32K.  If this is not present,
+# or is less than the sector size, the cluster size is one sector.
+#
+# A larger cluster size may be selected if the specified cluster size is too
+# large for the selected file system type, or for FAT32 if the file system type
+# is unspecified.
+
+CAPACITY <size>
+
+# Sets the capacity in bytes of the volume. <size> may be a decimal number,
+# possibly followed by K (2**10), M (2**20) or G (2**30). If this is not
+# present, the capacity is determined by the sizes of the files and
+# directories.
+
+ROOT_DIR_SIZE <size>
+
+# Sets the number of entries in the root directory. If this is not present,
+# the size is sufficient to hold all declared FILE and DIRECTORY entries.
+# In any case, the size is rounded up to the sector size.
+#
+# This is ignored on FAT32 volumes.
+
+LABEL "<text>"
+
+# Sets the volume label for the volume. If this is not present, no volume label
+# is present on the volume. The text may contain up to eleven characters.
+# Lower case is converted to upper case.
+#
+# Example:
+# LABEL "BIG VOLUME"
+
+DIRECTORY "<path>"
+
+# Declares a directory to be created on the volume. <path> is a path separated
+# by slash or backslash characters. The path is always relative to the root
+# directory.
+#
+# This line must be specified only if an empty directory is wanted. Any
+# directories needed to create a specified FILE or DIRECTORY entry are created
+# whether explicitly specified or not.
+
+FILE "<path>" <attributes>
+
+# Declares a file to be created on the volume. <path> is a path separated by
+# slash or backslash characters. <attributes> is zero or more of HIDDEN,
+# SYSTEM, READONLY or SOURCE. SOURCE must be followed by another "<path>" which
+# gives the file name from which the contents will be drawn; if no SOURCE is
+# given, this path is the one given after FILE.
+#
+# Examples:
+# FILE "dir.1/dir.2/test.txt" READONLY
+# FILE "dir.3/test2.txt" SOURCE "test4.txt"
