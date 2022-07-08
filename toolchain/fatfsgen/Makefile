@@ -1,7 +1,7 @@
 # Makefile for fatfsgen
 
 CXX  = g++
-CXXFLAGS = -Wall -O2
+CXXFLAGS = -Wall -O2 -std=c++11
 
 fatfsgen : fatfsgen.o
 	$(CXX) fatfsgen.o -o fatfsgen
