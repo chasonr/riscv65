@@ -553,7 +553,7 @@ FAT_open_volume(const char *filename)
     uint32_t root_dir_bytes;
     uint16_t root_dir_sectors;
 
-    if (!dos_open(FAT_target, filename, FA_READ)) {
+    if (!dos_open(FAT_target, filename, FA_READ|FA_WRITE)) {
         return false;
     }
 
