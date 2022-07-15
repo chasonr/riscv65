@@ -1679,20 +1679,26 @@ void FS_dir_entry::fill_directory()
         std::memset(&rec, 0, sizeof(rec));
         std::memcpy(rec.s.DIR_Name, disk_name, 11);
         rec.s.DIR_Attr = i->attributes;
-        auto dostime = unix_to_dos_time(i->fst.st_ctim);
-        rec.s.DIR_CrtTimeTenth = dostime.msec;
-        rec.s.DIR_CrtTime[0] = (std::uint8_t)(dostime.time >> 0);
-        rec.s.DIR_CrtTime[1] = (std::uint8_t)(dostime.time >> 8);
-        rec.s.DIR_CrtDate[0] = (std::uint8_t)(dostime.date >> 0);
-        rec.s.DIR_CrtDate[1] = (std::uint8_t)(dostime.date >> 8);
-        dostime = unix_to_dos_time(i->fst.st_atim);
-        rec.s.DIR_AccDate[0] = (std::uint8_t)(dostime.date >> 0);
-        rec.s.DIR_AccDate[1] = (std::uint8_t)(dostime.date >> 8);
-        dostime = unix_to_dos_time(i->fst.st_mtim);
-        rec.s.DIR_WrtTime[0] = (std::uint8_t)(dostime.time >> 0);
-        rec.s.DIR_WrtTime[1] = (std::uint8_t)(dostime.time >> 8);
-        rec.s.DIR_WrtDate[0] = (std::uint8_t)(dostime.date >> 0);
-        rec.s.DIR_WrtDate[1] = (std::uint8_t)(dostime.date >> 8);
+#ifdef __APPLE__
+        auto dos_ctime = unix_to_dos_time(i->fst.st_ctimespec);
+        auto dos_atime = unix_to_dos_time(i->fst.st_atimespec);
+        auto dos_mtime = unix_to_dos_time(i->fst.st_mtimespec);
+#else
+        auto dos_ctime = unix_to_dos_time(i->fst.st_ctim);
+        auto dos_atime = unix_to_dos_time(i->fst.st_atim);
+        auto dos_mtime = unix_to_dos_time(i->fst.st_mtim);
+#endif
+        rec.s.DIR_CrtTimeTenth = dos_ctime.msec;
+        rec.s.DIR_CrtTime[0] = (std::uint8_t)(dos_ctime.time >> 0);
+        rec.s.DIR_CrtTime[1] = (std::uint8_t)(dos_ctime.time >> 8);
+        rec.s.DIR_CrtDate[0] = (std::uint8_t)(dos_ctime.date >> 0);
+        rec.s.DIR_CrtDate[1] = (std::uint8_t)(dos_ctime.date >> 8);
+        rec.s.DIR_AccDate[0] = (std::uint8_t)(dos_atime.date >> 0);
+        rec.s.DIR_AccDate[1] = (std::uint8_t)(dos_atime.date >> 8);
+        rec.s.DIR_WrtTime[0] = (std::uint8_t)(dos_mtime.time >> 0);
+        rec.s.DIR_WrtTime[1] = (std::uint8_t)(dos_mtime.time >> 8);
+        rec.s.DIR_WrtDate[0] = (std::uint8_t)(dos_mtime.date >> 0);
+        rec.s.DIR_WrtDate[1] = (std::uint8_t)(dos_mtime.date >> 8);
         if (!(i->attributes & FS_dir_entry::ATTR_DIRECTORY)) {
             rec.s.DIR_FileSize[0] = (std::uint8_t)(i->size >>  0);
             rec.s.DIR_FileSize[1] = (std::uint8_t)(i->size >>  8);
