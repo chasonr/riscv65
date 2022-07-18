@@ -1,0 +1,6 @@
+VOLUME "filesys.img"
+FSTYPE FAT12
+ROOT_DIR_SIZE 224
+CAPACITY 1457664 # Size of a 3.5 inch high density floppy
+FILE "startup" SOURCE "hello"
+FILE "/mnt/dir.1/dir.2/test.txt" SOURCE "test.txt"
