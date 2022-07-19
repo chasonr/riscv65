@@ -42,14 +42,30 @@ kernal.o: kernal.s errno.inc registers.inc kernal.inc
 #         reu-load.prg, loads the RISC-V target and launches riscv65         #
 ##############################################################################
 
-reu-load.prg: reu-load.o chain-prg.o reu-load.cfg
-	cl65 reu-load.o chain-prg.o -C reu-load.cfg -o reu-load.prg -vm --mapfile reu-load.map
+REU_LOAD_OFILES = \
+	reu-load.o \
+	chain-prg.o \
+	reu.o \
+	cmd.o \
+	ultidos.o \
 
-reu-load.o: reu-load.c chain-prg.h
+reu-load.prg: $(REU_LOAD_OFILES) reu-load.cfg
+	cl65 $(REU_LOAD_OFILES) -C reu-load.cfg -o reu-load.prg -vm --mapfile reu-load.map
+
+reu-load.o: reu-load.c chain-prg.h cmd.h reu.h ultidos.h
 	cl65 -c -O -Cl reu-load.c -o reu-load.o
 
 chain-prg.o: chain-prg.c chain-prg.h
 	cl65 -c -O -Cl chain-prg.c -o chain-prg.o
+
+reu.o: reu.c reu.h
+	cl65 -c -O -Cl reu.c -o reu.o
+
+cmd.o: cmd.c cmd.h
+	cl65 -c -O -Cl cmd.c -o cmd.o
+
+ultidos.o: ultidos.c cmd.h ultidos.h
+	cl65 -c -O -Cl ultidos.c -o ultidos.o
 
 chain-prg.c: chain.bin
 	echo '#include "chain-prg.h"' >$@
