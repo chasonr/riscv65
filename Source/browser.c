@@ -1,6 +1,7 @@
 // browser.c -- Show a hierarchial display of the available files and allow
 // the user to select one to run
 
+#include <ctype.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -32,7 +33,10 @@ static bool load_dir_entry(uint32_t entry, char *path, uint8_t *attrs);
 static unsigned top_row;
 static unsigned cursor_pos;
 static char current_dir[MAX_PATH_LEN];
+static char search_str[40];
 
+static void search(uint8_t ch);
+static bool search_match(const char *path);
 static void cursor_up(void);
 static void cursor_down(void);
 static void cursor_left(void);
@@ -58,8 +62,6 @@ browser(char *path)
 
     clrscr();
     load_files(current_dir);
-    top_row = 0;
-    cursor_pos = 0;
     paint_screen();
 
     // enter directory: right (CH_CURS_RIGHT)
@@ -73,6 +75,11 @@ browser(char *path)
 
     while (!stop) {
         uint8_t ch = cgetc();
+        if ((0x20 <= ch && ch <= 0x5F) || (0xC0 <= ch && ch <= 0xDE)) {
+            search(ch);
+        } else {
+            search_str[0] = '\0';
+        }
         paint_directory();
         switch (ch) {
         case CH_CURS_UP:
@@ -147,6 +154,9 @@ load_files(const char *dir)
     }
 
     dos_close(dir_target);
+    top_row = 0;
+    cursor_pos = 0;
+    search_str[0] = '\0';
     return true;
 
 error:
@@ -186,6 +196,50 @@ load_dir_entry(uint32_t entry, char *path, uint8_t *attrs)
     reu_read(reu_addr, &n, sizeof(n));
     strcpy(path, n.path);
     *attrs = n.attrs;
+    return true;
+}
+
+static void
+search(uint8_t ch)
+{
+    size_t len = strlen(search_str);
+    if (len + 1 < sizeof(search_str)) {
+        char path[MAX_PATH_LEN];
+        uint8_t attr;
+        uint32_t match;
+
+        search_str[len] = ch;
+        search_str[len+1] = '\0';
+
+        for (match = 0; match < num_files; ++match) {
+            load_dir_entry(match, path, &attr);
+            if (search_match(path)) {
+                break;
+            }
+        }
+        if (match < num_files) {
+            cursor_pos = match;
+            if (match < 5) {
+                top_row = 0;
+            } else {
+                top_row = match - 5;
+            }
+            paint_screen();
+        }
+    }
+}
+
+// Return true if search_str matches the path
+// search_str is PETSCII; path is ASCII
+static bool
+search_match(const char *path)
+{
+    uint8_t i;
+    for (i = 0; search_str[i] != '\0'; ++i) {
+        if (toupper(ascii_to_petscii[(uint8_t)path[i]]) != toupper(search_str[i])) {
+            return false;
+        }
+    }
     return true;
 }
 
@@ -251,8 +305,6 @@ cursor_left(void)
 
         // Load new directory
         load_files(current_dir);
-        top_row = 0;
-        cursor_pos = 0;
         paint_screen();
     }
 }
@@ -292,8 +344,6 @@ cursor_right(void)
 
         // Load new directory
         load_files(current_dir);
-        top_row = 0;
-        cursor_pos = 0;
         paint_screen();
     }
 }
@@ -428,14 +478,14 @@ paint_row(uint8_t row, const char *line, uint8_t color)
             color_mem[j] = color;
         }
         for (; j < 40; ++j) {
-            screen[j] = ascii_to_screen[' '];
+            screen[j] = petscii_to_screen[' '];
         }
     } else {
         for (j = 0; j < 39; ++j) {
             screen[j] = ascii_to_screen[(uint8_t)line[j]];
             color_mem[j] = color;
         }
-        screen[39] = ascii_to_screen['>'];
+        screen[39] = petscii_to_screen['>'];
         color_mem[39] = COLOR_YELLOW;
     }
 }
@@ -448,21 +498,46 @@ paint_directory(void)
     size_t len;
     uint8_t j;
 
-    len = strlen(current_dir);
-    if (len <= 40) {
-        for (j = 0; current_dir[j] != '\0'; ++j) {
-            screen[j] = ascii_to_screen[(uint8_t)current_dir[j]];
-            color_mem[j] = COLOR_GRAY2;
-        }
-        for (; j < 40; ++j) {
-            screen[j] = ascii_to_screen[' '];
+    if (search_str[0] != '\0') {
+        // Display search string
+        char disp[sizeof(search_str)+10];
+        strcpy(disp, "Find: ");
+        strcat(disp, search_str);
+
+        len = strlen(disp);
+        if (len <= 40) {
+            for (j = 0; disp[j] != '\0'; ++j) {
+                screen[j] = petscii_to_screen[(uint8_t)disp[j]];
+                color_mem[j] = COLOR_GRAY2;
+            }
+            for (; j < 40; ++j) {
+                screen[j] = petscii_to_screen[' '];
+            }
+        } else {
+            for (j = 0; j < 39; ++j) {
+                screen[j] = petscii_to_screen[(uint8_t)disp[j+len-40]];
+                color_mem[j] = COLOR_GRAY2;
+            }
+            screen[39] = petscii_to_screen['>'];
+            color_mem[39] = COLOR_YELLOW;
         }
     } else {
-        screen[0] = ascii_to_screen['<'];
-        color_mem[0] = COLOR_YELLOW;
-        for (j = 1; j < 40; ++j) {
-            screen[j] = ascii_to_screen[(uint8_t)current_dir[j+len-40]];
-            color_mem[j] = COLOR_GRAY2;
+        len = strlen(current_dir);
+        if (len <= 40) {
+            for (j = 0; current_dir[j] != '\0'; ++j) {
+                screen[j] = ascii_to_screen[(uint8_t)current_dir[j]];
+                color_mem[j] = COLOR_GRAY2;
+            }
+            for (; j < 40; ++j) {
+                screen[j] = petscii_to_screen[' '];
+            }
+        } else {
+            screen[0] = petscii_to_screen['<'];
+            color_mem[0] = COLOR_YELLOW;
+            for (j = 1; j < 40; ++j) {
+                screen[j] = ascii_to_screen[(uint8_t)current_dir[j+len-40]];
+                color_mem[j] = COLOR_GRAY2;
+            }
         }
     }
 }
