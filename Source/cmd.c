@@ -86,3 +86,26 @@ cmd_xfer(CMD_struct *cmd)
     return true;
 }
 
+// After cmd_xfer, request second and subsequent packets
+bool
+cmd_xfer_next(CMD_struct *cmd)
+{
+    uint16_t dsize;
+
+    // Wait for packet ready
+    while ((CMD_STATUS & CMD_STATE_MASK) == CMD_STATE_BUSY) {}
+
+    // Return false if no packet
+    if ((CMD_STATUS & CMD_STATE_MASK) == CMD_STATE_IDLE) {
+        return false;
+    }
+
+    // Read data response
+    dsize = 0;
+    while (dsize < sizeof(cmd->data) && (CMD_STATUS & CMD_DATA_AV) != 0) {
+        cmd->data[dsize++] = CMD_RESPONSE_DATA;
+    }
+    cmd->data_size = dsize;
+    CMD_CONTROL = CMD_DATA_ACC;
+    return true;
+}

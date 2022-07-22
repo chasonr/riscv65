@@ -46,17 +46,25 @@ REU_LOAD_OFILES = \
 	reu-load.o \
 	chain-prg.o \
 	reu.o \
+	petscii.o \
 	cmd.o \
 	ultidos.o \
+	browser.o \
 
 reu-load.prg: $(REU_LOAD_OFILES) reu-load.cfg
 	cl65 $(REU_LOAD_OFILES) -C reu-load.cfg -o reu-load.prg -vm --mapfile reu-load.map
 
-reu-load.o: reu-load.c chain-prg.h cmd.h reu.h ultidos.h
+reu-load.o: reu-load.c chain-prg.h cmd.h petscii.h reu.h ultidos.h browser.h
 	cl65 -c -O -Cl reu-load.c -o reu-load.o
+
+browser.o: browser.c browser.h ultidos.h reu.h
+	cl65 -c -O -Cl browser.c -o browser.o
 
 chain-prg.o: chain-prg.c chain-prg.h
 	cl65 -c -O -Cl chain-prg.c -o chain-prg.o
+
+petscii.o: petscii.c petscii.h
+	cl65 -c -O -Cl petscii.c -o petscii.o
 
 reu.o: reu.c reu.h
 	cl65 -c -O -Cl reu.c -o reu.o

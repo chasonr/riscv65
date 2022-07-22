@@ -136,3 +136,79 @@ dos_read_reu(uint8_t target, uint32_t address, uint32_t len)
     ok = cmd_xfer(&cmd);
     return ok && memcmp(cmd.status, "00", 2) == 0;
 }
+
+// Change the current directory
+bool
+dos_change_dir(uint8_t target, const char *path)
+{
+    static CMD_struct cmd;
+    bool ok;
+
+    cmd.target = target;
+    cmd.command = DOS_CMD_CHANGE_DIR;
+    strcpy(cmd.data, path);
+    cmd.data_size = strlen(path);
+    ok = cmd_xfer(&cmd);
+    return ok && cmd.status[0] == '0';
+}
+
+// Open a directory
+bool
+dos_open_dir(uint8_t target)
+{
+    static CMD_struct cmd;
+    bool ok;
+
+    cmd.target = target;
+    cmd.command = DOS_CMD_OPEN_DIR;
+    cmd.data_size = 0;
+    ok = cmd_xfer(&cmd);
+    return ok && cmd.status[0] == '0';
+}
+
+// Read first directory entry
+bool
+dos_read_dir_first(uint8_t target, char *path, size_t len, uint8_t *attrs)
+{
+    static CMD_struct cmd;
+    bool ok;
+
+    cmd.target = target;
+    cmd.command = DOS_CMD_READ_DIR;
+    cmd.data_size = 0;
+
+    ok = cmd_xfer(&cmd) && cmd.data_size != 0;
+    if (ok) {
+        *attrs = cmd.data[0];
+        if (len > 0) {
+            if (cmd.data_size > len) {
+                cmd.data_size = len;
+            }
+            memcpy(path, cmd.data+1, cmd.data_size-1);
+            path[cmd.data_size-1] = '\0';
+        }
+    }
+    return ok;
+}
+
+// Read next directory entry
+// Return false if end of directory
+bool
+dos_read_dir_next(uint8_t target, char *path, size_t len, uint8_t *attrs)
+{
+    static CMD_struct cmd;
+    bool ok;
+
+    ok = cmd_xfer_next(&cmd) && cmd.data_size != 0;
+    if (ok) {
+        *attrs = cmd.data[0];
+        if (len > 0) {
+            if (cmd.data_size > len) {
+                cmd.data_size = len;
+            }
+            memcpy(path, cmd.data+1, cmd.data_size-1);
+            path[cmd.data_size-1] = '\0';
+        }
+    }
+    return ok;
+}

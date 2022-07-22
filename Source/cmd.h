@@ -26,4 +26,7 @@ extern void cmd_abort(void);
 // Run a command as set up in a CMD_struct
 extern bool cmd_xfer(CMD_struct *cmd);
 
+// After cmd_xfer, request second and subsequent packets
+extern bool cmd_xfer_next(CMD_struct *cmd);
+
 #endif
