@@ -1,0 +1,72 @@
+; Ulitmate 64 command interface
+
+; Addresses for command interface
+CMD_CONTROL        = $DF1C
+CMD_STATUS         = $DF1C
+CMD_DATA           = $DF1D
+CMD_IDENTIFICATION = $DF1D
+CMD_RESPONSE_DATA  = $DF1E
+CMD_STATUS_DATA    = $DF1F
+
+; CMD_CONTROL bits
+CMD_PUSH_CMD = $01
+CMD_DATA_ACC = $02
+CMD_ABORT    = $04
+CMD_CLR_ERR  = $08
+
+; CMD_STATUS bits
+CMD_BUSY       = $01
+;CMD_DATA_ACC  = $02
+CMD_ABORT_P    = $04
+CMD_ERROR      = $08
+CMD_STATE_MASK = $30
+CMD_STATE_IDLE = $00
+CMD_STATE_BUSY = $10
+CMD_STATE_LAST = $20
+CMD_STATE_MORE = $30
+CMD_STAT_AV    = $40
+CMD_DATA_AV    = $80
+
+; UltiDOS constants
+
+; Target IDs
+DOS_TARGET_1 = 1
+DOS_TARGET_2 = 2
+
+; Commands
+DOS_CMD_IDENTIFY       = $01
+DOS_CMD_OPEN_FILE      = $02
+    FA_READ          = $01
+    FA_WRITE         = $02
+    FA_CREATE_NEW    = $04
+    FA_CREATE_ALWAYS = $08
+DOS_CMD_CLOSE_FILE     = $03
+DOS_CMD_READ_DATA      = $04
+DOS_CMD_WRITE_DATA     = $05
+DOS_CMD_FILE_SEEK      = $06
+DOS_CMD_FILE_INFO      = $07
+DOS_CMD_FILE_STAT      = $08
+DOS_CMD_DELETE_FILE    = $09
+DOS_CMD_RENAME_FILE    = $0A
+DOS_CMD_COPY_FILE      = $0B
+DOS_CMD_CHANGE_DIR     = $11
+DOS_CMD_GET_PATH       = $12
+DOS_CMD_OPEN_DIR       = $13
+DOS_CMD_READ_DIR       = $14
+    ; These are also for FAT file systems
+    ATTR_ARCHIVE   = $20
+    ATTR_DIRECTORY = $10
+    ATTR_VOLUME    = $08
+    ATTR_SYSTEM    = $04
+    ATTR_HIDDEN    = $02
+    ATTR_READONLY  = $01
+DOS_CMD_CREATE_DIR  = $16
+DOS_CMD_COPY_HOME_PATH = $17
+DOS_CMD_LOAD_REU       = $21
+DOS_CMD_SAVE_REU       = $22
+DOS_CMD_MOUNT_DISK     = $23
+DOS_CMD_UMOUNT_DISK    = $24
+DOS_CMD_SWAP_DISK      = $25
+DOS_CMD_GET_TIME       = $26
+DOS_CMD_SET_TIME       = $27
+DOS_CMD_ECHO           = $F0
