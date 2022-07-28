@@ -399,23 +399,13 @@ file_error:
     got_match:
 
     ; Set the cursor to the matching row
-    ; Set browser_top_row to browser_cursor_pos-5, but not less than 0
+
     sec
     lda pointer1+0
     sta browser_cursor_pos+0
-    sbc #5
-    sta browser_top_row+0
     lda pointer1+1
     sta browser_cursor_pos+1
-    sbc #0
-    sta browser_top_row+1
-    bcs :+
-        lda #0
-        sta browser_top_row+0
-        sta browser_top_row+1
-    :
-
-    jmp paint_screen
+    jmp set_top_row
 
 .endproc
 
@@ -542,44 +532,7 @@ file_error:
         sbc #0
         sta browser_cursor_pos+1
 
-        ; Does this go off the top row?
-        lda browser_cursor_pos+0
-        cmp browser_top_row+0
-        lda browser_cursor_pos+1
-        sbc browser_top_row+1
-        bcc up_24
-
-            ; The cursor is still on the screen
-            lda browser_cursor_pos+0
-            sta pointer1+0
-            lda browser_cursor_pos+1
-            sta pointer1+1
-            jsr paint_filename ; new cursor
-            clc
-            lda browser_cursor_pos+0
-            adc #1
-            sta pointer1+0
-            lda browser_cursor_pos+1
-            adc #0
-            sta pointer1+1
-            jmp paint_filename ; old cursor
-
-        up_24:
-
-            ; browser_top_row -= 24 but not less than 0
-            sec
-            lda browser_top_row+0
-            sbc #24
-            sta browser_top_row+0
-            lda browser_top_row+1
-            sbc #0
-            sta browser_top_row+1
-            bcs :+
-                lda #0
-                sta browser_top_row+0
-                sta browser_top_row+1
-            :
-            jmp paint_screen
+        jmp set_top_row
 
     end1:
     rts
@@ -590,7 +543,7 @@ file_error:
 
 .proc cursor_down
 
-    ; pointer1 <- browser_cursor_pos+1   
+    ; pointer1 <- browser_cursor_pos+1
     clc
     lda browser_cursor_pos+0
     adc #1
@@ -612,40 +565,66 @@ file_error:
         lda pointer1+1
         sta browser_cursor_pos+1
 
-        ; Do we need to page down?
-        sec
-        lda pointer1+0
-        sbc browser_top_row+0
-        tax
-        lda pointer1+1
-        sbc browser_top_row+1
-        bne down_24
-        cpx #24
-        bcs down_24
-
-            ; The cursor is still on the current page
-
-            jsr paint_filename ; new cursor
-            sec
-            lda browser_cursor_pos+0
-            sbc #1
-            sta pointer1+0
-            lda browser_cursor_pos+1
-            sbc #0
-            sta pointer1+1
-            jmp paint_filename ; previous cursor
-
-        down_24:
-
-            ; Move to the next page
-            lda browser_cursor_pos+0
-            sta browser_top_row+0
-            lda browser_cursor_pos+1
-            sta browser_top_row+1
-            jmp paint_screen
+        jmp set_top_row
 
     end1:
     rts
+
+.endproc
+
+; Set the top row after changing the cursor position
+
+.proc set_top_row
+
+    ; Set to cursor position minus eleven...
+
+    sec
+    lda browser_cursor_pos+0
+    sbc #11
+    sta browser_top_row+0
+    lda browser_cursor_pos+1
+    sbc #0
+    sta browser_top_row+1
+
+    ; ...but not less than zero
+    bcs :+
+        lda #0
+        sta browser_top_row+0
+        sta browser_top_row+1
+        beq end
+    :
+
+    ; If fewer than 24 rows visible...
+
+    sec
+    lda browser_num_files+0
+    sbc browser_top_row+0
+    tax
+    lda browser_num_files+1
+    sbc browser_top_row+1
+    bne end     ; at least 256 rows visible
+    cpx #24
+    bcs end     ; at least 24 rows visible
+
+        ; ...set to number of files minus 24...
+
+        sec
+        lda browser_num_files+0
+        sbc #24
+        sta browser_top_row+0
+        lda browser_num_files+1
+        sbc #0
+        sta browser_top_row+1
+
+        ; ...but not less than zero
+
+        bcs end
+            lda #0
+            sta browser_top_row+0
+            sta browser_top_row+1
+
+    end:
+    jmp paint_screen
 
 .endproc
 
@@ -842,20 +821,6 @@ file_error:
 
 .proc page_up
 
-    ; browser_top_row -= 24 but not less than 0
-    sec
-    lda browser_top_row+0
-    sbc #24
-    sta browser_top_row+0
-    lda browser_top_row+1
-    sbc #0
-    sta browser_top_row+1
-    bcs :+
-        lda #0
-        sta browser_top_row+0
-        sta browser_top_row+1
-    :
-
     ; browser_cursor_pos -= 24 but not less than 0
     sec
     lda browser_cursor_pos+0
@@ -870,7 +835,7 @@ file_error:
         sta browser_cursor_pos+1
     :
 
-    jmp paint_screen
+    jmp set_top_row
 
 .endproc
 
@@ -883,66 +848,33 @@ file_error:
     ora browser_num_files+1
     beq end1
 
-    ; Determine number of rows after the cursor
-    sec
-    lda browser_num_files+0
-    sbc browser_cursor_pos+0
-    tax
-    lda browser_num_files+1
-    sbc browser_cursor_pos+1
-    bne down_24     ; At least 256
-    cpx #24
-    bcs down_24     ; At least 24
-    cpx #1
-    bcc end1        ; Nowhere for the cursor to go
-
-        ; 23 or fewer files after the cursor
-        ; browser_cursor_pos <- browser_num_files-1
-        sec
-        lda browser_num_files+0
-        sbc #1
-        sta browser_cursor_pos+0
-        lda browser_num_files+1
-        sbc #0
-        sta browser_cursor_pos+1
-        ; browser_top_row <- browser_cursor_pos - 23
-        sec
-        lda browser_cursor_pos+0
-        sbc #23
-        sta browser_top_row+0
-        lda browser_cursor_pos+1
-        sbc #0
-        sta browser_top_row+1
-        ; ...but not less than zero
-        bcs repaint
-
-            lda #0
-            sta browser_top_row+0
-            sta browser_top_row+1
-            beq repaint
-
-    down_24:
-
-        ; 24 or more files after the cursor
-        ; browser_top_row += 24
-        clc
-        lda browser_top_row+0
-        adc #24
-        sta browser_top_row+0
-        bcc :+
-            inc browser_top_row+1
-        :
         ; browser_cursor_pos += 24
+
         clc
         lda browser_cursor_pos+0
         adc #24
         sta browser_cursor_pos+0
+        lda browser_cursor_pos+1
+        adc #0
+        sta browser_cursor_pos+1
+
+        ; Don't go past the last row
+
+        lda browser_cursor_pos+0
+        cmp browser_num_files+0
+        lda browser_cursor_pos+1
+        sbc browser_num_files+1
         bcc :+
-            inc browser_cursor_pos+1
+            sec
+            lda browser_num_files+0
+            sbc #1
+            sta browser_cursor_pos+0
+            lda browser_num_files+1
+            sbc #0
+            sta browser_cursor_pos+1
         :
 
-    repaint:
-    jsr paint_screen
+        jmp set_top_row
 
     end1:
     rts
