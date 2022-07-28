@@ -19,6 +19,8 @@ riscv65.crt : $(BANKS) crttool
 
 BANK0_OFILES = \
 	init.o \
+	browser.o \
+	ultidos.o \
 	memory.o
 
 bank0.bin: $(BANK0_OFILES) cartridge.cfg
@@ -26,6 +28,12 @@ bank0.bin: $(BANK0_OFILES) cartridge.cfg
 
 init.o: init.s memory.inc kernal.inc cmd.inc reu.inc
 	ca65 init.s -o init.o -t c64 -l init.lst
+
+browser.o: browser.s kernal.inc memory.inc reu.inc ultidos.inc
+	ca65 browser.s -o browser.o -t c64 -l browser.lst
+
+ultidos.o: ultidos.s memory.inc ultidos.inc
+	ca65 ultidos.s -o ultidos.o -t c64 -l ultidos.lst
 
 ##############################################################################
 #                          Bank 1: test of far call                          #

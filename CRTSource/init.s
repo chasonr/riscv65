@@ -6,6 +6,8 @@
 .include "cmd.inc"
 .include "reu.inc"
 
+.import browser
+
 .code
 
 ; Entry points and signature
@@ -13,8 +15,31 @@
 .word nmi_entry
 .byte $C3, $C2, $CD, $38, $30
 
-; No entry jump table is yet defined for Bank 0. If one is ever defined, it
-; will go here.
+; Entry jump table for Bank 0
+.import dos_init
+jmp dos_init
+.import dos_open
+jmp dos_open
+.import dos_close
+jmp dos_close
+.import dos_seek
+jmp dos_seek
+.import dos_read
+jmp dos_read
+.import dos_read_reu
+jmp dos_read_reu
+.import dos_write
+jmp dos_write
+.import dos_write_reu
+jmp dos_write_reu
+.import dos_change_dir
+jmp dos_change_dir
+.import dos_open_dir
+jmp dos_open_dir
+.import dos_read_dir_first
+jmp dos_read_dir_first
+.import dos_read_dir_next
+jmp dos_read_dir_next
 
 ; Cold start enters here
 .proc cold_start
@@ -100,6 +125,41 @@
     inx
     bne shift_loop
 
+    ; Populate ascii_to_screen
+    ldx #$7F
+    ascii_tbl:
+        lda ascii_to_screen_tbl,x
+        sta ascii_to_screen+$00,x
+        sta ascii_to_screen+$80,x
+    dex
+    bpl ascii_tbl
+
+    ; Populate petscii_to_screen
+    ldx #0
+    petscii_tbl_1:
+        txa
+        sta petscii_to_screen,x
+    inx
+    bne petscii_tbl_1
+    ldx #31
+    petscii_tbl_2:
+        txa
+        sta petscii_to_screen+$40,x ; $40..$5F -> $00..$1F
+        ora #$40
+        sta petscii_to_screen+$C0,x ; $C0..$DF -> $40..$5F
+        ora #$C0
+        sta petscii_to_screen+$00,x ; $00..$1F -> $C0..$DF
+    dex
+    bpl petscii_tbl_2
+
+    ; Populate ascii_to_petscii
+    ldx #0
+    petscii_tbl_3:
+        lda ascii_to_petscii_tbl,x
+        sta ascii_to_petscii,x
+    inx
+    bne petscii_tbl_3
+
     jmp warm_start
 
 .endproc
@@ -170,38 +230,20 @@
         jmp bad_platform
     :
 
+    ; Go to the browser
+    jsr browser
+
     ldx #0
     @print:
-        lda hello,x
+        lda browser_path,x
         beq @end_print
         jsr CHROUT
     inx
     bne @print
     @end_print:
-
-    lda #$81
-    ldx #<$8009
-    ldy #>$8009
-    jsr far_call
-
-scope_1:
-
-    ldx #0
-    @print:
-        lda got_back,x
-        beq @end_print
-        jsr CHROUT
-    inx
-    bne @print
-    @end_print:
-
-scope_2:
 
     @stop:
     jmp @stop
-
-hello: .byte "hello world", 13, 0
-got_back: .byte "back from far call", 13, 0
 
 .endproc
 
@@ -481,3 +523,57 @@ warm_start_end_thunk:
 
 .endproc
 warm_start_return_end_thunk:
+
+.rodata
+
+ascii_to_screen_tbl:
+    .byte $60, $61, $62, $63, $64, $65, $66, $67
+    .byte $68, $69, $6A, $6B, $6C, $6D, $6E, $6F
+    .byte $70, $71, $72, $73, $74, $75, $76, $77
+    .byte $78, $79, $7A, $7B, $7C, $7D, $7E, $7F
+    .byte $20, $21, $22, $23, $24, $25, $26, $27
+    .byte $28, $29, $2A, $2B, $2C, $2D, $2E, $2F
+    .byte $30, $31, $32, $33, $34, $35, $36, $37
+    .byte $38, $39, $3A, $3B, $3C, $3D, $3E, $3F
+    .byte $00, $41, $42, $43, $44, $45, $46, $47
+    .byte $48, $49, $4A, $4B, $4C, $4D, $4E, $4F
+    .byte $50, $51, $52, $53, $54, $55, $56, $57
+    .byte $58, $59, $5A, $1B, $7F, $1D, $1E, $64
+    .byte $6D, $01, $02, $03, $04, $05, $06, $07
+    .byte $08, $09, $0A, $0B, $0C, $0D, $0E, $0F
+    .byte $10, $11, $12, $13, $14, $15, $16, $17
+    .byte $18, $19, $1A, $73, $5D, $6B, $71, $5F
+
+ascii_to_petscii_tbl:
+    .byte $00, $01, $02, $03, $04, $05, $06, $07
+    .byte $08, $09, $0A, $0B, $0C, $0D, $0E, $0F
+    .byte $10, $11, $12, $13, $14, $15, $16, $17
+    .byte $18, $19, $1A, $1B, $1C, $1D, $1E, $1F
+    .byte $20, $21, $22, $23, $24, $25, $26, $27
+    .byte $28, $29, $2A, $2B, $2C, $2D, $2E, $2F
+    .byte $30, $31, $32, $33, $34, $35, $36, $37
+    .byte $38, $39, $3A, $3B, $3C, $3D, $3E, $3F
+    .byte $40, $C1, $C2, $C3, $C4, $C5, $C6, $C7
+    .byte $C8, $C9, $CA, $CB, $CC, $CD, $CE, $CF
+    .byte $D0, $D1, $D2, $D3, $D4, $D5, $D6, $D7
+    .byte $D8, $D9, $DA, $5B, $BF, $5D, $5E, $A4
+    .byte $AD, $41, $42, $43, $44, $45, $46, $47
+    .byte $48, $49, $4A, $4B, $4C, $4D, $4E, $4F
+    .byte $50, $51, $52, $53, $54, $55, $56, $57
+    .byte $58, $59, $5A, $B3, $DD, $AB, $B1, $DF
+    .byte $80, $81, $82, $83, $84, $85, $86, $87
+    .byte $88, $89, $8A, $8B, $8C, $8D, $8E, $8F
+    .byte $90, $91, $92, $0C, $94, $95, $96, $97
+    .byte $98, $99, $9A, $9B, $9C, $9D, $9E, $9F
+    .byte $A0, $A1, $A2, $A3, $A4, $A5, $A6, $A7
+    .byte $A8, $A9, $AA, $AB, $AC, $AD, $AE, $AF
+    .byte $B0, $B1, $B2, $B3, $B4, $B5, $B6, $B7
+    .byte $B8, $B9, $BA, $BB, $BC, $BD, $BE, $BF
+    .byte $60, $61, $62, $63, $64, $65, $66, $67
+    .byte $68, $69, $6A, $6B, $6C, $6D, $6E, $6F
+    .byte $70, $71, $72, $73, $74, $75, $76, $77
+    .byte $78, $79, $7A, $7B, $7C, $7D, $7E, $7F
+    .byte $E0, $E1, $E2, $E3, $E4, $E5, $E6, $E7
+    .byte $E8, $E9, $EA, $EB, $EC, $ED, $EE, $EF
+    .byte $F0, $F1, $F2, $F3, $F4, $F5, $F6, $F7
+    .byte $F8, $F9, $FA, $FB, $FC, $FD, $FE, $FF
