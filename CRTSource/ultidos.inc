@@ -15,4 +15,17 @@ FA_VOLUME    = $08
 FA_DIRECTORY = $10
 FA_ARCHIVE   = $20
 
+.global dos_init
+.global dos_open
+.global dos_close
+.global dos_seek
+.global dos_read
+.global dos_read_reu
+.global dos_write
+.global dos_write_reu
+.global dos_change_dir
+.global dos_open_dir
+.global dos_read_dir_first
+.global dos_read_dir_next
+
 ; vim: syntax=asm

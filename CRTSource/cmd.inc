@@ -36,10 +36,6 @@ DOS_TARGET_2 = 2
 ; Commands
 DOS_CMD_IDENTIFY       = $01
 DOS_CMD_OPEN_FILE      = $02
-    FA_READ          = $01
-    FA_WRITE         = $02
-    FA_CREATE_NEW    = $04
-    FA_CREATE_ALWAYS = $08
 DOS_CMD_CLOSE_FILE     = $03
 DOS_CMD_READ_DATA      = $04
 DOS_CMD_WRITE_DATA     = $05
@@ -70,3 +66,5 @@ DOS_CMD_SWAP_DISK      = $25
 DOS_CMD_GET_TIME       = $26
 DOS_CMD_SET_TIME       = $27
 DOS_CMD_ECHO           = $F0
+
+; vim: syntax=asm

@@ -73,3 +73,5 @@ reu_address_control = $DF0A
     bit reu_status
 
 .endmacro
+
+; vim: syntax=asm

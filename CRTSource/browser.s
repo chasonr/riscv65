@@ -6,12 +6,6 @@
 .include "reu.inc"
 .include "ultidos.inc"
 
-.import dos_close
-.import dos_change_dir
-.import dos_open_dir
-.import dos_read_dir_first
-.import dos_read_dir_next
-
 ; Command interface target used by the browser
 DIR_TARGET = 2
 
@@ -265,18 +259,6 @@ file_name = file_attr+1
     rts
 
 file_error:
-
-    ; Status string is ASCII; convert to PETSCII
-    ldx #0
-    convert_loop:
-        lda ultidos_status,x
-        beq end_convert_loop
-        tay
-        lda ascii_to_petscii,y
-        sta ultidos_status,x
-    inx
-    bne convert_loop
-    end_convert_loop:
 
     ldx #<ultidos_status
     ldy #>ultidos_status

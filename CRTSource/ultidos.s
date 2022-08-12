@@ -65,7 +65,6 @@ DOS_CMD_ECHO           = $F0
 ; Initialize the command interface
 ; Return 0 in pointer1 if the command interface is present
 
-.global dos_init
 .proc dos_init
 
     ; Make sure we have a command interface
@@ -105,7 +104,6 @@ no_interface:
 ; Status string is returned in ultidos status. pointer1 is 0 on success.
 ; pointer2 may be altered.
 
-.global dos_open
 .proc dos_open
 
     lda pointer1+0  ; target
@@ -136,7 +134,6 @@ no_interface:
 ; pointer1 is set to the target (1 or 2)
 ; Status string is returned in ultidos status. pointer1 is 0 on success.
 
-.global dos_close
 .proc dos_close
 
     lda pointer1+0  ; target
@@ -154,7 +151,6 @@ no_interface:
 ; longreg1 is set to the position.
 ; Status string is returned in ultidos status. pointer1 is 0 on success.
 
-.global dos_seek
 .proc dos_seek
 
     lda pointer1+0  ; target
@@ -168,6 +164,7 @@ no_interface:
     lda longreg1+2
     sta CMD_DATA
     lda longreg1+3
+    sta CMD_DATA
 
     jsr start_command
     jmp end_command
@@ -182,7 +179,6 @@ no_interface:
 ; pointer3 returns the actual length read.
 ; pointer2 may be altered.
 
-.global dos_read
 .proc dos_read
 
     lda pointer1+0  ; target
@@ -251,7 +247,6 @@ end_read:
 ; longreg2 is set to the transfer size.
 ; Status string is returned in ultidos status. pointer1 is 0 on success.
 
-.global dos_read_reu
 .proc dos_read_reu
 
     lda pointer1+0  ; target
@@ -288,7 +283,6 @@ end_read:
 ; Status string is returned in ultidos status. pointer1 is 0 on success.
 ; pointer2 and pointer3 may be altered.
 
-.global dos_write
 .proc dos_write
 
     ; end_command overwrites pointer1, so save the target in X
@@ -393,7 +387,6 @@ end_write:
 ; longreg2 is set to the transfer size.
 ; Status string is returned in ultidos status. pointer1 is 0 on success.
 
-.global dos_write_reu
 .proc dos_write_reu
 
     lda pointer1+0  ; target
@@ -429,7 +422,6 @@ end_write:
 ; Status string is returned in ultidos status. pointer1 is 0 on success.
 ; pointer2 may be altered.
 
-.global dos_change_dir
 .proc dos_change_dir
 
     lda pointer1+0  ; target
@@ -463,7 +455,6 @@ end_write:
 ; Status string is returned in ultidos status. pointer1 is 0 on success.
 ; pointer1 is 1 if the directory is empty.
 
-.global dos_open_dir
 .proc dos_open_dir
 
     lda pointer1+0  ; target
@@ -482,7 +473,6 @@ end_write:
 ; Status string is returned in ultidos status. pointer1 is 0 on success.
 ; pointer3 returns the file attributes.
 
-.global dos_read_dir_first
 .proc dos_read_dir_first
 
     lda pointer1+0  ; target
@@ -528,7 +518,6 @@ end_read:
 ; pointer3 returns the file attributes.
 ; Return pointer1 != 0 if end of directory.
 
-.global dos_read_dir_next
 .proc dos_read_dir_next
 
     ; Wait for ready
@@ -633,7 +622,8 @@ end_of_directory:
 
         bit CMD_STATUS
         bvc end_read_loop ; No more status
-        lda CMD_STATUS_DATA
+        ldy CMD_STATUS_DATA
+        lda ascii_to_petscii,y
         sta ultidos_status,x
 
     inx

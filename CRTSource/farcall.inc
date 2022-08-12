@@ -51,4 +51,24 @@ dos_read_dir_first_entry = $8009 + 10*3
 dos_read_dir_next_bank = 0
 dos_read_dir_next_entry = $8009 + 11*3
 
+; Bank 1; jump table in bank1.s
+
+fatfs_init_bank = 1
+fatfs_init_entry = $8009 + 0*3
+
+fatfs_search_startup_bank = 1
+fatfs_search_startup_entry = $8009 + 1*3
+
+fatfs_search_bank = 1
+fatfs_search_entry = $8009 + 2*3
+
+fatfs_seek_bank = 1
+fatfs_seek_entry = $8009 + 3*3
+
+fatfs_read_mem_bank = 1
+fatfs_read_mem_entry = $8009 + 4*3
+
+fatfs_read_bank = 1
+fatfs_read_entry = $8009 + 5*3
+
 ; vim: syntax=asm

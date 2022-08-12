@@ -5,6 +5,8 @@
 .include "kernal.inc"
 .include "cmd.inc"
 .include "reu.inc"
+.include "reu-load.inc"
+.include "ultidos.inc"
 
 .import browser
 
@@ -16,29 +18,17 @@
 .byte $C3, $C2, $CD, $38, $30
 
 ; Entry jump table for Bank 0
-.import dos_init
 jmp dos_init
-.import dos_open
 jmp dos_open
-.import dos_close
 jmp dos_close
-.import dos_seek
 jmp dos_seek
-.import dos_read
 jmp dos_read
-.import dos_read_reu
 jmp dos_read_reu
-.import dos_write
 jmp dos_write
-.import dos_write_reu
 jmp dos_write_reu
-.import dos_change_dir
 jmp dos_change_dir
-.import dos_open_dir
 jmp dos_open_dir
-.import dos_read_dir_first
 jmp dos_read_dir_first
-.import dos_read_dir_next
 jmp dos_read_dir_next
 
 ; Cold start enters here
@@ -233,6 +223,7 @@ jmp dos_read_dir_next
     ; Go to the browser
     jsr browser
 
+    ;;;;
     ldx #0
     @print:
         lda browser_path,x
@@ -241,10 +232,34 @@ jmp dos_read_dir_next
     inx
     bne @print
     @end_print:
+    lda #13
+    jsr CHROUT
+    ;;;;
+
+    ; Load the target into the REU
+    jsr reu_load
+
+    ;;;;
+    x1:
+    ldx #0
+    @print:
+        lda test_message,x
+        beq @end_print
+        jsr CHROUT
+    inx
+    bne @print
+    @end_print:
+    lda #13
+    jsr CHROUT
+    ;;;;
 
     @stop:
     jmp @stop
 
+    ;;;;
+    test_message:
+    .asciiz "Load complete"
+    ;;;;
 .endproc
 
 ; Query the size of the RAM Expansion Unit
