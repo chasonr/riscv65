@@ -22,12 +22,13 @@ BANK0_OFILES = \
 	browser.o \
 	reu-load.o \
 	ultidos.o \
+	reu.o \
 	memory.o
 
 bank0.bin: $(BANK0_OFILES) cartridge.cfg
 	cl65 $(BANK0_OFILES) -C cartridge.cfg -o bank0.bin -vm --mapfile bank0.map
 
-init.o: init.s memory.inc kernal.inc cmd.inc reu.inc reu-load.inc ultidos.inc
+init.o: init.s memory.inc kernal.inc cmd.inc reu.inc reu-regs.inc reu-load.inc ultidos.inc
 	ca65 init.s -o init.o -t c64 -l init.lst
 
 browser.o: browser.s kernal.inc memory.inc reu.inc ultidos.inc
@@ -68,6 +69,13 @@ memory.o: memory.s memory.inc
 
 crtheader.o: crtheader.s memory.inc
 	ca65 crtheader.s -o crtheader.o -t c64 -l crtheader.lst
+
+##############################################################################
+#                        Common to two or more banks                         #
+##############################################################################
+
+reu.o: reu.s reu.inc reu-regs.inc memory.inc
+	ca65 reu.s -o reu.o -t c64 -l reu.lst
 
 ##############################################################################
 #                               Cartridge tool                               #

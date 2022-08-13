@@ -235,6 +235,15 @@ fatfs_file_data: .tag fatfs_filedata
 fatfs_open_files: .res .sizeof(fatfs_filedata) * FATFS_MAX_FILES
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; reu.s uses this area
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+reu_c64_address: .res 2
+reu_xmem_address: .res 3
+reu_xfer_size: .res 2
+reu_partial_size: .res 2
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Scratch area, internal to various routines
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 scratch_area: .res 512

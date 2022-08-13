@@ -280,19 +280,19 @@ file_error:
 
     ; reu_xmem_address <- pointer1 * 257
     lda pointer1+0
-    sta reu_xmem_address_0
+    sta reu_xmem_address+0
     clc
     lda pointer1+0
     adc pointer1+1
-    sta reu_xmem_address_1
+    sta reu_xmem_address+1
     lda pointer1+1
     adc #0
-    sta reu_xmem_address_2
+    sta reu_xmem_address+2
 
     ; Retrieve the record from the REU
     set_local_address scratch_area
     set_xfer_size_imm 257
-    do_reu_write
+    jsr reu_write
 
     rts
 
@@ -305,19 +305,19 @@ file_error:
 
     ; reu_xmem_address <- pointer1 * 257
     lda pointer1+0
-    sta reu_xmem_address_0
+    sta reu_xmem_address+0
     clc
     lda pointer1+0
     adc pointer1+1
-    sta reu_xmem_address_1
+    sta reu_xmem_address+1
     lda pointer1+1
     adc #0
-    sta reu_xmem_address_2
+    sta reu_xmem_address+2
 
     ; Retrieve the record from the REU
     set_local_address scratch_area
     set_xfer_size_imm 257
-    do_reu_read
+    jsr reu_read
 
     rts
 

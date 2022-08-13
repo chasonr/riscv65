@@ -5,6 +5,7 @@
 .include "kernal.inc"
 .include "cmd.inc"
 .include "reu.inc"
+.include "reu-regs.inc"
 .include "reu-load.inc"
 .include "ultidos.inc"
 
@@ -306,34 +307,34 @@ jmp dos_read_dir_next
 
         ; Write bytes55 to address zero
         lda #0
-        sta reu_xmem_address_0
-        sta reu_xmem_address_1
-        sta reu_xmem_address_2
+        sta reu_xmem_address+0
+        sta reu_xmem_address+1
+        sta reu_xmem_address+2
         set_local_address bytes55
         set_xfer_size_imm 8
-        do_reu_write
+        jsr reu_write
 
         ; Write bytesAA to the test address
         lda #0
-        sta reu_xmem_address_0
-        sta reu_xmem_address_1
+        sta reu_xmem_address+0
+        sta reu_xmem_address+1
         ldx log_addr
         lda test_addr_hi-1,x
-        sta reu_xmem_address_2
+        sta reu_xmem_address+2
         set_local_address bytesAA
         set_xfer_size_imm 8
-        do_reu_write
+        jsr reu_write
 
         ; Read back from the test address
         lda #0
-        sta reu_xmem_address_0
-        sta reu_xmem_address_1
+        sta reu_xmem_address+0
+        sta reu_xmem_address+1
         ldx log_addr
         lda test_addr_hi-1,x
-        sta reu_xmem_address_2
+        sta reu_xmem_address+2
         set_local_address rbytes
         set_xfer_size_imm 8
-        do_reu_read
+        jsr reu_read
 
         ; Should be the same as bytesAA
         ldx #8
@@ -346,12 +347,12 @@ jmp dos_read_dir_next
 
         ; Read back from address 0
         lda #0
-        sta reu_xmem_address_0
-        sta reu_xmem_address_1
-        sta reu_xmem_address_2
+        sta reu_xmem_address+0
+        sta reu_xmem_address+1
+        sta reu_xmem_address+2
         set_local_address rbytes
         set_xfer_size_imm 8
-        do_reu_read
+        jsr reu_read
 
         ; Should be the same as bytes55
         ldx #8
@@ -403,6 +404,13 @@ test_addr_hi: .byte $01, $02, $04, $08, $10, $20, $40, $80
     bne no_reu
 
     ; REU is detected
+    ; Set the address control register to 0, saving a step when we do a
+    ; transfer
+    lda #0
+    sta reu_address_control
+    ; Disable interrupts from the REU
+    sta reu_irq_mask
+    ; Indicate REU detected
     lda #1
     rts
 

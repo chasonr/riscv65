@@ -76,8 +76,7 @@ zero: .byte 0
     max_readonly = pgm_header_num + 2
     min_writable = max_readonly + 3
     end_addr = min_writable + 3
-    zero_addr = end_addr + 4
-    zero_size = zero_addr + 3
+    zero_size = end_addr + 4
     base_name = zero_size + 3
     base_length = base_name + 1
     init_stack = base_length + 1
@@ -508,32 +507,26 @@ zero: .byte 0
         jne report_error
 
         ; Zero-fill to the specified memory size
-.if 1
-        lda #$80
-        sta reu_address_control ; Don't advance the local address
         clc
         lda program_header+ELF_program_header::p_vaddr+0
         adc program_header+ELF_program_header::p_filesz+0
-        sta reu_xmem_address_0
-        sta zero_addr+0
+        sta reu_xmem_address+0
         lda program_header+ELF_program_header::p_vaddr+1
         adc program_header+ELF_program_header::p_filesz+1
-        sta reu_xmem_address_1
-        sta zero_addr+1
+        sta reu_xmem_address+1
         lda program_header+ELF_program_header::p_vaddr+2
         adc program_header+ELF_program_header::p_filesz+2
-        sta reu_xmem_address_2
-        sta zero_addr+2
+        sta reu_xmem_address+2
         set_local_address zero
         sec
         lda end_addr+0
-        sbc zero_addr+0
+        sbc reu_xmem_address+0
         sta zero_size+0
         lda end_addr+1
-        sbc zero_addr+1
+        sbc reu_xmem_address+1
         sta zero_size+1
         lda end_addr+2
-        sbc zero_addr+2
+        sbc reu_xmem_address+2
         sta zero_size+2
         ora zero_size+1
         beq end_zero_loop
@@ -544,22 +537,20 @@ zero: .byte 0
             lda #0
             sbc zero_size+2
             sta zero_size+2
+            set_xfer_size_imm 256
             zero_loop:
-                set_xfer_size_imm 256
-                do_reu_write
+                jsr reu_fill
+                inc reu_xmem_address+1
+                bne :+
+                inc reu_xmem_address+2
+                :
             inc zero_size+1
             bne zero_loop
             inc zero_size+2
             bne zero_loop
         end_zero_loop:
-        lda zero_size+0
-        beq end_zero
-            set_xfer_size zero_size
-            do_reu_write
-        end_zero:
-        lda #$00        ; Return REU to normal operation
-        sta reu_address_control
-.endif
+        set_xfer_size zero_size
+        jsr reu_fill
 
     next_header:
 
@@ -698,25 +689,28 @@ zero: .byte 0
     sta init_stack+15
     ; Copy to REU
     lda RISCV_ireg_0+REG_sp
-    sta reu_xmem_address_0
+    sta reu_xmem_address+0
     lda RISCV_ireg_1+REG_sp
-    sta reu_xmem_address_1
+    sta reu_xmem_address+1
     lda RISCV_ireg_2+REG_sp
-    sta reu_xmem_address_2
+    sta reu_xmem_address+2
     set_local_address init_stack
     set_xfer_size_imm 16
-    do_reu_write
+    jsr reu_write
     ; Copy the name
     set_reu_address init_stack+8
     clc
     lda #<browser_path
     adc base_name
-    sta reu_c64_address_0
+    sta reu_c64_address+0
     lda #>browser_path
     adc #0
-    sta reu_c64_address_1
-    set_xfer_size base_length
-    do_reu_write
+    sta reu_c64_address+1
+    lda base_length
+    sta reu_xfer_size+0
+    lda #0
+    sta reu_xfer_size+1
+    jsr reu_write
 
     lda #0
     sta fatfs_open_files+0
