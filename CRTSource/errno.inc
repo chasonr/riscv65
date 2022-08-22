@@ -92,11 +92,11 @@ EWOULDBLOCK     = EAGAIN ; Operation would block
         ; set errno from err
         lda #$100-err
     .endif
-    sta _RISCV_ireg_0+REG_a0
+    sta RISCV_ireg_0+REG_a0
     lda #$FF
-    sta _RISCV_ireg_1+REG_a0
-    sta _RISCV_ireg_2+REG_a0
-    sta _RISCV_ireg_3+REG_a0
+    sta RISCV_ireg_1+REG_a0
+    sta RISCV_ireg_2+REG_a0
+    sta RISCV_ireg_3+REG_a0
 
 .endmacro
 

@@ -8,6 +8,8 @@
 .include "reu-regs.inc"
 .include "reu-load.inc"
 .include "ultidos.inc"
+.include "error.inc"
+.include "farcall.inc"
 
 .import browser
 
@@ -31,6 +33,8 @@ jmp dos_change_dir
 jmp dos_open_dir
 jmp dos_read_dir_first
 jmp dos_read_dir_next
+jmp dos_get_time
+jmp error_dump
 
 ; Cold start enters here
 .proc cold_start
@@ -64,6 +68,48 @@ jmp dos_read_dir_next
         sta warm_start_return-1,x
     dex
     bne copy_4
+
+    ldx #far_read_8_end_thunk - far_read_8_thunk
+    copy_5:
+        lda far_read_8_thunk-1,x
+        sta far_read_8-1,x
+    dex
+    bne copy_5
+
+    ldx #far_read_16_end_thunk - far_read_16_thunk
+    copy_6:
+        lda far_read_16_thunk-1,x
+        sta far_read_16-1,x
+    dex
+    bne copy_6
+
+    ldx #far_read_32_end_thunk - far_read_32_thunk
+    copy_7:
+        lda far_read_32_thunk-1,x
+        sta far_read_32-1,x
+    dex
+    bne copy_7
+
+    ldx #far_write_8_end_thunk - far_write_8_thunk
+    copy_8:
+        lda far_write_8_thunk-1,x
+        sta far_write_8-1,x
+    dex
+    bne copy_8
+
+    ldx #far_write_16_end_thunk - far_write_16_thunk
+    copy_9:
+        lda far_write_16_thunk-1,x
+        sta far_write_16-1,x
+    dex
+    bne copy_9
+
+    ldx #far_write_32_end_thunk - far_write_32_thunk
+    copy_10:
+        lda far_write_32_thunk-1,x
+        sta far_write_32-1,x
+    dex
+    bne copy_10
 
     ; Build the shift tables:
     ldx #0
@@ -116,42 +162,49 @@ jmp dos_read_dir_next
     inx
     bne shift_loop
 
-    ; Populate ascii_to_screen
-    ldx #$7F
-    ascii_tbl:
-        lda ascii_to_screen_tbl,x
-        sta ascii_to_screen+$00,x
-        sta ascii_to_screen+$80,x
-    dex
-    bpl ascii_tbl
-
     ; Populate petscii_to_screen
     ldx #0
-    petscii_tbl_1:
+    petscii_tbl:
+        ldy rshift5,x
         txa
+        and #$1F
+        ora screen_map,y
         sta petscii_to_screen,x
     inx
-    bne petscii_tbl_1
-    ldx #31
-    petscii_tbl_2:
-        txa
-        sta petscii_to_screen+$40,x ; $40..$5F -> $00..$1F
-        ora #$40
-        sta petscii_to_screen+$C0,x ; $C0..$DF -> $40..$5F
-        ora #$C0
-        sta petscii_to_screen+$00,x ; $00..$1F -> $C0..$DF
-    dex
-    bpl petscii_tbl_2
+    bne petscii_tbl
 
-    ; Populate ascii_to_petscii
+    ; Populate ascii_to_petscii and petscii_to_ascii
     ldx #0
     petscii_tbl_3:
         lda ascii_to_petscii_tbl,x
         sta ascii_to_petscii,x
+        tay
+        txa
+        sta petscii_to_ascii,y
     inx
     bne petscii_tbl_3
 
+    ; Populate ascii_to_screen
+    ldx #0
+    ascii_tbl:
+        ldy ascii_to_petscii,x
+        lda petscii_to_screen,y
+        sta ascii_to_screen,x
+    inx
+    bpl ascii_tbl
+
     jmp warm_start
+
+    ; Map from PETSCII to screen codes
+screen_map:
+    .byte $80   ; Lower control codes
+    .byte $20   ; Symbols and digits
+    .byte $00   ; Lower case
+    .byte $C0   ; Upper case, alternate map
+    .byte $A0   ; Upper control codes
+    .byte $60   ; PETSCII symbols
+    .byte $40   ; Upper case
+    .byte $E0   ; PETSCII symbols, alternate map
 
 .endproc
 
@@ -221,46 +274,24 @@ jmp dos_read_dir_next
         jmp bad_platform
     :
 
-    ; Go to the browser
-    jsr browser
+    main_loop:
+        ; Go to the browser
+        jsr browser
 
-    ;;;;
-    ldx #0
-    @print:
-        lda browser_path,x
-        beq @end_print
-        jsr CHROUT
-    inx
-    bne @print
-    @end_print:
-    lda #13
-    jsr CHROUT
-    ;;;;
+        ; Load the target into the REU
+        jsr reu_load
 
-    ; Load the target into the REU
-    jsr reu_load
+        ; Run the target
+        jsr_far RISCV_emulator_bank,RISCV_emulator_entry
 
-    ;;;;
-    x1:
-    ldx #0
-    @print:
-        lda test_message,x
-        beq @end_print
-        jsr CHROUT
-    inx
-    bne @print
-    @end_print:
-    lda #13
-    jsr CHROUT
-    ;;;;
+        ; Wait for a key
+        :
+            jsr GETIN
+        cmp #0
+        beq :-
 
-    @stop:
-    jmp @stop
+    jmp main_loop
 
-    ;;;;
-    test_message:
-    .asciiz "Load complete"
-    ;;;;
 .endproc
 
 ; Query the size of the RAM Expansion Unit
@@ -547,30 +578,162 @@ warm_start_end_thunk:
 .endproc
 warm_start_return_end_thunk:
 
+; Read byte from banked area
+; On entry: A = 6510 bank setting; Y:X = address
+; Return byte in RISCV_data
+
+.proc far_read_8_thunk
+
+    stx pointer1+0
+    sty pointer1+1
+    ldx $00
+    ldy #0
+    sei
+    sta $00
+    lda (pointer1),y
+    sta RISCV_data+0
+    stx $00
+    cli
+    rts
+
+.endproc
+far_read_8_end_thunk:
+
+; Read 16-bit word from banked area
+; On entry: A = 6510 bank setting; Y:X = address
+; Return word in RISCV_data
+
+.proc far_read_16_thunk
+
+    stx pointer1+0
+    sty pointer1+1
+    ldx $00
+    ldy #0
+    sei
+    sta $00
+    lda (pointer1),y
+    sta RISCV_data+0
+    iny
+    lda (pointer1),y
+    sta RISCV_data+1
+    stx $00
+    cli
+    rts
+
+.endproc
+far_read_16_end_thunk:
+
+; Read 32-bit word from banked area
+; On entry: A = 6510 bank setting; Y:X = address
+; Return word in RISCV_data
+
+.proc far_read_32_thunk
+
+    stx pointer1+0
+    sty pointer1+1
+    ldx $00
+    ldy #0
+    sei
+    sta $00
+    lda (pointer1),y
+    sta RISCV_data+0
+    iny
+    lda (pointer1),y
+    sta RISCV_data+1
+    iny
+    lda (pointer1),y
+    sta RISCV_data+2
+    iny
+    lda (pointer1),y
+    sta RISCV_data+3
+    stx $00
+    cli
+    rts
+
+.endproc
+far_read_32_end_thunk:
+
+; Write byte to banked area
+; On entry: A = 6510 bank setting; Y:X = address; byte in RISCV_data
+
+.proc far_write_8_thunk
+
+    stx pointer1+0
+    sty pointer1+1
+    ldx $00
+    ldy #0
+    sei
+    sta $00
+    lda RISCV_data+0
+    sta (pointer1),y
+    stx $00
+    cli
+    rts
+
+.endproc
+far_write_8_end_thunk:
+
+; Write 16-bit word to banked area
+; On entry: A = 6510 bank setting; Y:X = address; word in RISCV_data
+
+.proc far_write_16_thunk
+
+    stx pointer1+0
+    sty pointer1+1
+    ldx $00
+    ldy #0
+    sei
+    sta $00
+    lda RISCV_data+0
+    sta (pointer1),y
+    iny
+    lda RISCV_data+1
+    sta (pointer1),y
+    stx $00
+    cli
+    rts
+
+.endproc
+far_write_16_end_thunk:
+
+; Write 32-bit word to banked area
+; On entry: A = 6510 bank setting; Y:X = address; word in RISCV_data
+
+.proc far_write_32_thunk
+
+    stx pointer1+0
+    sty pointer1+1
+    ldx $00
+    ldy #0
+    sei
+    sta $00
+    lda RISCV_data+0
+    sta (pointer1),y
+    iny
+    lda RISCV_data+1
+    sta (pointer1),y
+    iny
+    lda RISCV_data+2
+    sta (pointer1),y
+    iny
+    lda RISCV_data+3
+    sta (pointer1),y
+    stx $00
+    cli
+    rts
+
+.endproc
+far_write_32_end_thunk:
+
 .rodata
 
-ascii_to_screen_tbl:
-    .byte $60, $61, $62, $63, $64, $65, $66, $67
-    .byte $68, $69, $6A, $6B, $6C, $6D, $6E, $6F
-    .byte $70, $71, $72, $73, $74, $75, $76, $77
-    .byte $78, $79, $7A, $7B, $7C, $7D, $7E, $7F
-    .byte $20, $21, $22, $23, $24, $25, $26, $27
-    .byte $28, $29, $2A, $2B, $2C, $2D, $2E, $2F
-    .byte $30, $31, $32, $33, $34, $35, $36, $37
-    .byte $38, $39, $3A, $3B, $3C, $3D, $3E, $3F
-    .byte $00, $41, $42, $43, $44, $45, $46, $47
-    .byte $48, $49, $4A, $4B, $4C, $4D, $4E, $4F
-    .byte $50, $51, $52, $53, $54, $55, $56, $57
-    .byte $58, $59, $5A, $1B, $7F, $1D, $1E, $64
-    .byte $6D, $01, $02, $03, $04, $05, $06, $07
-    .byte $08, $09, $0A, $0B, $0C, $0D, $0E, $0F
-    .byte $10, $11, $12, $13, $14, $15, $16, $17
-    .byte $18, $19, $1A, $73, $5D, $6B, $71, $5F
-
+; Table to convert ASCII to PETSCII for the screen
+; This is based on the mapping used by cc65, but positions $A4, $AB, $AD, $B1,
+; $B3 and $BF are changed to produce an invertible mapping
 ascii_to_petscii_tbl:
     .byte $00, $01, $02, $03, $04, $05, $06, $07
-    .byte $08, $09, $0A, $0B, $0C, $0D, $0E, $0F
-    .byte $10, $11, $12, $13, $14, $15, $16, $17
+    .byte $14, $09, $0D, $11, $93, $0A, $0E, $0F
+    .byte $10, $0B, $12, $13, $08, $15, $16, $17
     .byte $18, $19, $1A, $1B, $1C, $1D, $1E, $1F
     .byte $20, $21, $22, $23, $24, $25, $26, $27
     .byte $28, $29, $2A, $2B, $2C, $2D, $2E, $2F
@@ -588,10 +751,10 @@ ascii_to_petscii_tbl:
     .byte $88, $89, $8A, $8B, $8C, $8D, $8E, $8F
     .byte $90, $91, $92, $0C, $94, $95, $96, $97
     .byte $98, $99, $9A, $9B, $9C, $9D, $9E, $9F
-    .byte $A0, $A1, $A2, $A3, $A4, $A5, $A6, $A7
-    .byte $A8, $A9, $AA, $AB, $AC, $AD, $AE, $AF
-    .byte $B0, $B1, $B2, $B3, $B4, $B5, $B6, $B7
-    .byte $B8, $B9, $BA, $BB, $BC, $BD, $BE, $BF
+    .byte $A0, $A1, $A2, $A3, $5F, $A5, $A6, $A7
+    .byte $A8, $A9, $AA, $DC, $AC, $C0, $AE, $AF
+    .byte $B0, $DE, $B2, $DB, $B4, $B5, $B6, $B7
+    .byte $B8, $B9, $BA, $BB, $BC, $BD, $BE, $5C
     .byte $60, $61, $62, $63, $64, $65, $66, $67
     .byte $68, $69, $6A, $6B, $6C, $6D, $6E, $6F
     .byte $70, $71, $72, $73, $74, $75, $76, $77

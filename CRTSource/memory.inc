@@ -14,8 +14,73 @@
 ; The PC register
 .globalzp RISCV_pc
 
+; If this is nonzero, the PC needs to be checked against the fence
+.globalzp RISCV_pc_check
+
 ; The fence, for memory protection
 .globalzp RISCV_fence
+
+; Multiply operands and result
+.globalzp mul_op1_0
+.globalzp mul_op1_1
+.globalzp mul_op1_2
+.globalzp mul_op1_3
+.globalzp mul_op2_0
+.globalzp mul_op2_1
+.globalzp mul_op2_2
+.globalzp mul_op2_3
+.globalzp mul_prod_0
+.globalzp mul_prod_1
+.globalzp mul_prod_2
+.globalzp mul_prod_3
+.globalzp mul_prod_4
+.globalzp mul_prod_5
+.globalzp mul_prod_6
+.globalzp mul_prod_7
+
+; Divide operands and result; these reuse the multiply areas
+div_op1_0 = mul_op1_0
+div_op1_1 = mul_op1_1
+div_op1_2 = mul_op1_2
+div_op1_3 = mul_op1_3
+div_op2_0 = mul_op2_0
+div_op2_1 = mul_op2_1
+div_op2_2 = mul_op2_2
+div_op2_3 = mul_op2_3
+div_rem_0 = mul_prod_0
+div_rem_1 = mul_prod_1
+div_rem_2 = mul_prod_2
+div_rem_3 = mul_prod_3
+div_quo_0 = mul_prod_4
+div_quo_1 = mul_prod_5
+div_quo_2 = mul_prod_6
+div_quo_3 = mul_prod_7
+
+; Fetched opcode goes here
+.globalzp RISCV_opcode
+
+; Address for load or store
+.globalzp RISCV_address
+
+; Data for load or store
+.globalzp RISCV_data
+
+; Scratch areas:
+; For multiply and divide
+.globalzp div_op1_sign
+.globalzp div_op2_sign
+.globalzp muldiv_scratch2_4
+.globalzp muldiv_scratch2_5
+; For fusion of MULH* with MUL and of DIV with REM
+.globalzp old_opcode
+.globalzp rs1_reg
+.globalzp rs2_reg
+.globalzp rd_reg
+; For immediate value in opcode, and other purposes
+.globalzp imm_0
+.globalzp imm_1
+.globalzp imm_2
+.globalzp imm_3
 
 ; Integer registers
 .global RISCV_ireg_0,RISCV_ireg_1,RISCV_ireg_2,RISCV_ireg_3
@@ -30,6 +95,7 @@
 
 .global RISCV_break
 .global RISCV_min_break
+.global RISCV_saved_sp
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Bank switching areas. Bank 0 writes code here to be visible to all banks.
@@ -39,6 +105,12 @@
 .global cold_start_jump
 .global warm_start_jump
 .global warm_start_return
+.global far_read_8
+.global far_read_16
+.global far_read_32
+.global far_write_8
+.global far_write_16
+.global far_write_32
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; The file browser uses this area
@@ -232,6 +304,27 @@ FATFS_MAX_COMPONENTS = 16
 .global reu_partial_size
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; syscall.s uses this area
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; Structure for gettimeofday
+; Matches struct timeval in Newlib newlib/libc/include/sys/_timeval.h
+.struct timeval
+    tv_sec  .dword 2
+    tv_usec .dword
+    pad     .dword
+.endstruct
+
+.global syscall_path
+.global syscall_dos_year
+.global syscall_dos_month
+.global syscall_dos_day
+.global syscall_dos_hour
+.global syscall_dos_minute
+.global syscall_dos_second
+.global syscall_unix_time
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Scratch area, internal to various routines
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -250,6 +343,7 @@ FATFS_MAX_COMPONENTS = 16
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 .global ascii_to_petscii
+.global petscii_to_ascii
 .global ascii_to_screen
 .global petscii_to_screen
 

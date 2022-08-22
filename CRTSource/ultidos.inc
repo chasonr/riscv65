@@ -27,5 +27,6 @@ FA_ARCHIVE   = $20
 .global dos_open_dir
 .global dos_read_dir_first
 .global dos_read_dir_next
+.global dos_get_time
 
 ; vim: syntax=asm

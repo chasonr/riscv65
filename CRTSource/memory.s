@@ -28,8 +28,55 @@ current_file: .res 2
 ; The PC register
 RISCV_pc: .res 4
 
+; If this is nonzero, the PC needs to be checked against the fence
+RISCV_pc_check: .res 1
+
 ; The fence, for memory protection
 RISCV_fence: .res 1
+
+; Multiply operands and result
+mul_op1_0: .res 1
+mul_op1_1: .res 1
+mul_op1_2: .res 1
+mul_op1_3: .res 1
+mul_op2_0: .res 1
+mul_op2_1: .res 1
+mul_op2_2: .res 1
+mul_op2_3: .res 1
+mul_prod_0: .res 1
+mul_prod_1: .res 1
+mul_prod_2: .res 1
+mul_prod_3: .res 1
+mul_prod_4: .res 1
+mul_prod_5: .res 1
+mul_prod_6: .res 1
+mul_prod_7: .res 1
+
+; Fetched opcode goes here
+RISCV_opcode: .res 4
+
+; Address for load or store
+RISCV_address: .res 4
+
+; Data for load or store
+RISCV_data: .res 4
+
+; Scratch areas:
+; For multiply and divide
+div_op1_sign: .res 1
+div_op2_sign: .res 1
+muldiv_scratch2_4: .res 1
+muldiv_scratch2_5: .res 1
+; For fusion of MULH* with MUL and of DIV with REM
+old_opcode: .res 3
+rs1_reg: .res 1
+rs2_reg: .res 1
+rd_reg: .res 1
+; For immediate value in opcode, and other purposes
+imm_0: .res 1
+imm_1: .res 1
+imm_2: .res 1
+imm_3: .res 1
 
 .bss
 
@@ -71,6 +118,7 @@ RISCV_ireg_3: .res 32
 
 RISCV_break: .res 3
 RISCV_min_break: .res 3
+RISCV_saved_sp: .res 1
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Bank switching areas. Bank 0 writes code here to be visible to all banks.
@@ -80,6 +128,12 @@ far_call: .res 32
 cold_start_jump: .res 16
 warm_start_jump: .res 16
 warm_start_return: .res 16
+far_read_8: .res 32
+far_read_16: .res 32
+far_read_32: .res 48
+far_write_8: .res 32
+far_write_16: .res 32
+far_write_32: .res 48
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; The file browser uses this area
@@ -244,6 +298,19 @@ reu_xfer_size: .res 2
 reu_partial_size: .res 2
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; syscall.s uses this area
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+syscall_path: .res 256
+syscall_dos_year: .res 2
+syscall_dos_month: .res 1
+syscall_dos_day: .res 1
+syscall_dos_hour: .res 1
+syscall_dos_minute: .res 1
+syscall_dos_second: .res 1
+syscall_unix_time: .res .sizeof(timeval)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Scratch area, internal to various routines
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 scratch_area: .res 512
@@ -280,5 +347,6 @@ rsshift6: .res 256
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ascii_to_petscii: .res 256
+petscii_to_ascii: .res 256
 ascii_to_screen: .res 256
 petscii_to_screen: .res 256
