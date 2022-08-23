@@ -589,6 +589,20 @@ end_of_directory:
     sta CMD_DATA
 
     jsr start_command
+
+    ldy #0
+    read_loop:
+        bit CMD_STATUS
+        bpl end_read
+        lda CMD_RESPONSE_DATA
+        sta (pointer2),y
+    iny
+    cpy #19
+    bcc read_loop
+    end_read:
+    lda #0
+    sta (pointer2),y
+
     jmp end_command
 
 .endproc

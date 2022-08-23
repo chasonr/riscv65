@@ -637,9 +637,9 @@ end_read:
 
     ; Get time from the U64
     lda #<scratch_area
-    sta pointer1+0
+    sta pointer2+0
     lda #>scratch_area
-    sta pointer1+1
+    sta pointer2+1
     jsr_far dos_get_time_bank,dos_get_time_entry
 
     ; dos_get_time always succeeds
