@@ -71,18 +71,33 @@ fatfs.o: fatfs.s memory.inc farcall.inc errno.inc fatfs.inc
 	ca65 fatfs.s -o fatfs.o -t c64 -l fatfs.lst
 
 ##############################################################################
-#                     Bank 2: Main instruction dispatch                      #
+#            Banks 2 and 3: Copy the RISC-V interpreter from here            #
 ##############################################################################
 
-BANK2_OFILES = \
+bank2.bin: riscv65.bin crtheader.bin
+	cp crtheader.bin bank2.bin
+	dd if=riscv65.bin of=bank2.bin conv=notrunc oflag=append bs=8183 skip=0 count=1
+
+bank3.bin: riscv65.bin crtheader.bin
+	cp crtheader.bin bank3.bin
+	dd if=riscv65.bin of=bank3.bin conv=notrunc oflag=append bs=8183 skip=1 count=1
+
+CRTHEADER_OFILES = \
 	crtheader.o \
+	memory.o
+
+crtheader.bin: $(CRTHEADER_OFILES)
+	cl65 $(CRTHEADER_OFILES) -C cartridge.cfg -o crtheader.bin
+
+RISCV65_OFILES = \
 	bank2.o \
 	riscv65.o \
 	vm-api.o \
+	muldiv.o \
 	memory.o
 
-bank2.bin: $(BANK2_OFILES) cartridge.cfg
-	cl65 $(BANK2_OFILES) -C cartridge.cfg -o bank2.bin -vm --mapfile bank2.map
+riscv65.bin: $(RISCV65_OFILES) riscv65.cfg
+	cl65 $(RISCV65_OFILES) -C riscv65.cfg -o riscv65.bin -vm --mapfile riscv65.map
 
 bank2.o: bank2.s riscv65.inc
 	ca65 bank2.s -o bank2.o -t c64 -l bank2.lst
@@ -92,22 +107,6 @@ riscv65.o: riscv65.s registers.inc reu-regs.inc memory.inc farcall.inc riscv65.i
 
 vm-api.o: vm-api.s registers.inc memory.inc kernal.inc reu-regs.inc vm-api.inc farcall.inc riscv65.inc error.inc
 	ca65 vm-api.s -o vm-api.o -t c64 -l vm-api.lst
-
-##############################################################################
-#                 Bank 3: Integer multiply, divide and shift                 #
-##############################################################################
-
-BANK3_OFILES = \
-	crtheader.o \
-	bank3.o \
-	muldiv.o \
-	memory.o
-
-bank3.bin: $(BANK3_OFILES) cartridge.cfg
-	cl65 $(BANK3_OFILES) -C cartridge.cfg -o bank3.bin -vm --mapfile bank3.map
-
-bank3.o: bank3.s muldiv.inc
-	ca65 bank3.s -o bank3.o -t c64 -l bank3.lst
 
 muldiv.o: muldiv.s registers.inc reu-regs.inc memory.inc
 	ca65 muldiv.s -o muldiv.o -t c64 -l muldiv.lst
@@ -161,4 +160,4 @@ crttool: crttool.c
 ##############################################################################
 
 clean:
-	rm -f *.o *.map *.lst bank*.bin riscv65.crt crttool
+	rm -f *.o *.map *.lst bank*.bin riscv65.bin crtheader.bin riscv65.crt crttool

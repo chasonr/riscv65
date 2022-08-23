@@ -13,8 +13,8 @@
 c64_text_screen = $0400
 c64_text_size = $0400
 ; Location of graphics mode screen
-c64_graph_screen = $8000
-c64_graph_size = $8000
+c64_graph_screen = $C000
+c64_graph_size = $4000
 ; Location of I/O space
 c64_io_space = $D000
 c64_io_size = $1000

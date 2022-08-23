@@ -78,41 +78,14 @@ fatfs_read_bank = 1
 fatfs_read_entry = $8009 + 5*3
 
 ; Bank 2; jump table in bank2.s
+; These are located in main memory and reached by a JSR or JMP
 
-RISCV_emulator_bank = 2
-RISCV_emulator_entry = $8009 + 0*3
+RISCV_instruction_bank_1 = 2
+RISCV_instruction_bank_2 = 3
 
-RISCV_exit_bank = 2
-RISCV_exit_entry = $8009 + 1*3
+RISCV_emulator_entry = $4000 + 0*3
 
-; Bank 3; jump table in bank3.s
-
-multiply_signed_bank = 3
-multiply_signed_entry = $8009 + 0*3
-
-multiply_signed_unsigned_bank = 3
-multiply_signed_unsigned_entry = $8009 + 1*3
-
-multiply_unsigned_bank = 3
-multiply_unsigned_entry = $8009 + 2*3
-
-multiply_low_bank = 3
-multiply_low_entry = $8009 + 3*3
-
-divide_signed_bank = 3
-divide_signed_entry = $8009 + 4*3
-
-divide_unsigned_bank = 3
-divide_unsigned_entry = $8009 + 5*3
-
-shift_left_bank = 3
-shift_left_entry = $8009 + 6*3
-
-shift_right_unsigned_bank = 3
-shift_right_unsigned_entry = $8009 + 7*3
-
-shift_right_signed_bank = 3
-shift_right_signed_entry = $8009 + 8*3
+RISCV_exit_entry = $4000 + 1*3
 
 ; Bank 4; jump table in bank4.s
 

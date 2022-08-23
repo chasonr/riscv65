@@ -5,6 +5,7 @@
 .include "reu-regs.inc"
 .include "memory.inc"
 .include "farcall.inc"
+.include "muldiv.inc"
 .include "riscv65.inc"
 .include "vm-api.inc"
 
@@ -750,7 +751,7 @@ bad_opcode:
     get_rs2_a ; actually shift distance
     sta pointer1+0
 
-    jsr_far shift_left_bank,shift_left_entry
+    jsr shift_left
 
     get_rd_x
     beq @end
@@ -797,10 +798,10 @@ bad_opcode:
     jmp invalid_opcode
 
     @do_unsigned:
-        jsr_far shift_right_unsigned_bank,shift_right_unsigned_entry
+        jsr shift_right_unsigned
         jmp @store
     @do_signed:
-        jsr_far shift_right_signed_bank,shift_right_signed_entry
+        jsr shift_right_signed
 
     @store:
     get_rd_x
@@ -1033,7 +1034,7 @@ OP_table:
     and #$1F
     sta pointer1+0
 
-    jsr_far shift_left_bank,shift_left_entry
+    jsr shift_left
 
     get_rd_x
     beq @end
@@ -1164,7 +1165,7 @@ OP_table:
     and #$1F
     sta pointer1+0
 
-    jsr_far shift_right_unsigned_bank,shift_right_unsigned_entry
+    jsr shift_right_unsigned
 
     get_rd_x
     beq @end
@@ -1198,7 +1199,7 @@ OP_table:
     and #$1F
     sta pointer1+0
 
-    jsr_far shift_right_signed_bank,shift_right_signed_entry
+    jsr shift_right_signed
 
     get_rd_x
     beq @end
@@ -1301,7 +1302,7 @@ OP_table:
     lda RISCV_ireg_3,y
     sta mul_op2_3
 
-    jsr_far multiply_low_bank,multiply_low_entry
+    jsr multiply_low
 
     get_rd_x
     beq @end
@@ -1344,7 +1345,7 @@ OP_table:
     lda RISCV_ireg_3,y
     sta mul_op2_3
 
-    jsr_far multiply_signed_bank,multiply_signed_entry
+    jsr multiply_signed
 
     get_rd_x
     stx rd_reg
@@ -1388,7 +1389,7 @@ OP_table:
     lda RISCV_ireg_3,y
     sta mul_op2_3
 
-    jsr_far multiply_signed_unsigned_bank,multiply_signed_unsigned_entry
+    jsr multiply_signed_unsigned
 
     get_rd_x
     stx rd_reg
@@ -1432,7 +1433,7 @@ OP_table:
     lda RISCV_ireg_3,y
     sta mul_op2_3
 
-    jsr_far multiply_unsigned_bank,multiply_unsigned_entry
+    jsr multiply_unsigned
 
     get_rd_x
     stx rd_reg
@@ -1543,7 +1544,7 @@ do_instruction:
     lda RISCV_ireg_3,y
     sta div_op2_3
 
-    jsr_far divide_signed_bank,divide_signed_entry
+    jsr divide_signed
 
     get_rd_x
     stx rd_reg
@@ -1587,7 +1588,7 @@ do_instruction:
     lda RISCV_ireg_3,y
     sta div_op2_3
 
-    jsr_far divide_unsigned_bank,divide_unsigned_entry
+    jsr divide_unsigned
 
     get_rd_x
     stx rd_reg
@@ -1696,7 +1697,7 @@ do_instruction:
     lda RISCV_ireg_3,y
     sta div_op2_3
 
-    jsr_far divide_signed_bank,divide_signed_entry
+    jsr divide_signed
 
     get_rd_x
     beq @end
@@ -1736,7 +1737,7 @@ do_instruction:
     lda RISCV_ireg_3,y
     sta div_op2_3
 
-    jsr_far divide_unsigned_bank,divide_unsigned_entry
+    jsr divide_unsigned
 
     get_rd_x
     beq @end

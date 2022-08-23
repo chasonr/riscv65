@@ -111,6 +111,17 @@ jmp error_dump
     dex
     bne copy_10
 
+    ; Copy the RISC-V interpreter into main memory
+    ; This thunk needs to run only once, so use the scratch_area instead
+    ; of allocating a dedicated area
+    ldx #riscv_copy_end - riscv_copy
+    copy_11:
+        lda riscv_copy-1,x
+        sta scratch_area-1,x
+    dex
+    bne copy_11
+    jsr scratch_area
+
     ; Build the shift tables:
     ldx #0
     shift_loop:
@@ -282,7 +293,7 @@ screen_map:
         jsr reu_load
 
         ; Run the target
-        jsr_far RISCV_emulator_bank,RISCV_emulator_entry
+        jsr RISCV_emulator_entry
 
         ; Wait for a key
         :
@@ -724,6 +735,72 @@ far_write_16_end_thunk:
 
 .endproc
 far_write_32_end_thunk:
+
+; This copies the RISC-V interpreter into RAM
+
+.proc riscv_copy
+
+    ; Set the destination address
+    lda #<RISCV_emulator_entry
+    sta pointer1+0
+    lda #>RISCV_emulator_entry
+    sta pointer1+1
+    ldy #0
+
+    ; Copy RISCV_instruction_bank_1
+    lda #RISCV_instruction_bank_1
+    sta current_bank
+    sta $DE00
+    lda #<$8009
+    sta pointer2+0
+    lda #>$8009
+    sta pointer2+1
+    copy_1:
+        lda (pointer2),y
+        sta (pointer1),y
+        inc pointer1+0
+        bne :+
+            inc pointer1+1
+        :
+        inc pointer2+0
+        bne :+
+            inc pointer2+1
+        :
+    lda pointer2+1
+    cmp #$A0
+    bcc copy_1
+
+    ; Copy RISCV_instruction_bank_2
+    lda #RISCV_instruction_bank_2
+    sta current_bank
+    sta $DE00
+    lda #<$8009
+    sta pointer2+0
+    lda #>$8009
+    sta pointer2+1
+    copy_2:
+        lda (pointer2),y
+        sta (pointer1),y
+        inc pointer1+0
+        bne :+
+            inc pointer1+1
+        :
+        inc pointer2+0
+        bne :+
+            inc pointer2+1
+        :
+    lda pointer2+1
+    cmp #$A0
+    bcc copy_2
+
+    ; Return to the caller
+    lda #0
+    sta current_bank
+    sta $DE00
+    rts
+
+.endproc
+riscv_copy_end:
 
 .rodata
 

@@ -1,3 +1,5 @@
 bank*.bin
+crtheader.bin
+riscv65.bin
 crttool
 riscv65.crt

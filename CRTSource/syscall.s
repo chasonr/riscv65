@@ -604,8 +604,7 @@ end_read:
 ; A0 contains the exit code; this is ignored
 .proc SYS_exit
 
-    jsr_far RISCV_exit_bank,RISCV_exit_entry
-    ; Does not return
+    jmp RISCV_exit_entry
 
 .endproc
 
@@ -1924,7 +1923,7 @@ ten:
     lda #ERR_bad_syscall
     sta pointer1+0
     jsr_far error_dump_bank,error_dump_entry
-    jsr_far RISCV_exit_bank,RISCV_exit_entry ; does not return
+    jmp RISCV_exit_entry
 
 .endproc
 
@@ -1943,6 +1942,6 @@ ten:
     lda #ERR_bad_ebreak
     sta pointer1+0
     jsr_far error_dump_bank,error_dump_entry
-    jsr_far RISCV_exit_bank,RISCV_exit_entry ; does not return
+    jmp RISCV_exit_entry
 
 .endproc
