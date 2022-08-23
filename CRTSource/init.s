@@ -250,8 +250,12 @@ screen_map:
         ; Load the target into the REU
         jsr reu_load
 
-        ; Run the target
-        jsr RISCV_emulator_entry
+        ; Run the target if successfully loaded
+        lda pointer1+0
+        ora pointer1+1
+        bne :+
+            jsr RISCV_emulator_entry
+        :
 
         ; Wait for a key
         :

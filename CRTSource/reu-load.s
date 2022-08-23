@@ -66,6 +66,7 @@ zero: .byte 0
 ; file system.
 ; reu_load opens the file system, looks for a file called "startup" in the
 ; root directory, loads it into the REU and then starts the RISC-V emulation.
+; On return: pointer1 is 0 if the program loaded.
 
 .proc reu_load
 
@@ -733,7 +734,7 @@ message:
 
     lda #0
     sta fatfs_open_files+0
-    lda #0
+    lda #$FF
     sta pointer1+0
     sta pointer1+1
     rts
