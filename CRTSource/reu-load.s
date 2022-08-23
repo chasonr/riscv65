@@ -449,8 +449,6 @@ zero: .byte 0
         sbc end_addr+1
         lda RISCV_break+2
         sbc end_addr+2
-        lda RISCV_break+3
-        sbc end_addr+3
         bcs :+
             lda end_addr+0
             sta RISCV_break+0
@@ -458,8 +456,6 @@ zero: .byte 0
             sta RISCV_break+1
             lda end_addr+2
             sta RISCV_break+2
-            lda end_addr+3
-            sta RISCV_break+3
         :
 
         ; Seek to the location of the segment in memory

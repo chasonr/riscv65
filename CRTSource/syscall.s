@@ -779,8 +779,6 @@ end_read:
         sta RISCV_ireg_1+REG_a0
         lda RISCV_break+2
         sta RISCV_ireg_2+REG_a0
-        lda RISCV_break+3
-        sta RISCV_ireg_3+REG_a0
         rts
 
     set_break:
@@ -820,8 +818,6 @@ end_read:
     sta RISCV_break+1
     lda RISCV_ireg_2+REG_a0
     sta RISCV_break+2
-    lda RISCV_ireg_3+REG_a0
-    sta RISCV_break+3
     ; leave A0 unchanged
     rts
 
