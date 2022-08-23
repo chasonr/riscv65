@@ -105,12 +105,6 @@ div_quo_3 = mul_prod_7
 .global cold_start_jump
 .global warm_start_jump
 .global warm_start_return
-.global far_read_8
-.global far_read_16
-.global far_read_32
-.global far_write_8
-.global far_write_16
-.global far_write_32
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; The file browser uses this area

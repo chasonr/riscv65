@@ -69,57 +69,15 @@ jmp error_dump
     dex
     bne copy_4
 
-    ldx #far_read_8_end_thunk - far_read_8_thunk
-    copy_5:
-        lda far_read_8_thunk-1,x
-        sta far_read_8-1,x
-    dex
-    bne copy_5
-
-    ldx #far_read_16_end_thunk - far_read_16_thunk
-    copy_6:
-        lda far_read_16_thunk-1,x
-        sta far_read_16-1,x
-    dex
-    bne copy_6
-
-    ldx #far_read_32_end_thunk - far_read_32_thunk
-    copy_7:
-        lda far_read_32_thunk-1,x
-        sta far_read_32-1,x
-    dex
-    bne copy_7
-
-    ldx #far_write_8_end_thunk - far_write_8_thunk
-    copy_8:
-        lda far_write_8_thunk-1,x
-        sta far_write_8-1,x
-    dex
-    bne copy_8
-
-    ldx #far_write_16_end_thunk - far_write_16_thunk
-    copy_9:
-        lda far_write_16_thunk-1,x
-        sta far_write_16-1,x
-    dex
-    bne copy_9
-
-    ldx #far_write_32_end_thunk - far_write_32_thunk
-    copy_10:
-        lda far_write_32_thunk-1,x
-        sta far_write_32-1,x
-    dex
-    bne copy_10
-
     ; Copy the RISC-V interpreter into main memory
     ; This thunk needs to run only once, so use the scratch_area instead
     ; of allocating a dedicated area
     ldx #riscv_copy_end - riscv_copy
-    copy_11:
+    copy_5:
         lda riscv_copy-1,x
         sta scratch_area-1,x
     dex
-    bne copy_11
+    bne copy_5
     jsr scratch_area
 
     ; Build the shift tables:
@@ -588,153 +546,6 @@ warm_start_end_thunk:
 
 .endproc
 warm_start_return_end_thunk:
-
-; Read byte from banked area
-; On entry: A = 6510 bank setting; Y:X = address
-; Return byte in RISCV_data
-
-.proc far_read_8_thunk
-
-    stx pointer1+0
-    sty pointer1+1
-    ldx $00
-    ldy #0
-    sei
-    sta $00
-    lda (pointer1),y
-    sta RISCV_data+0
-    stx $00
-    cli
-    rts
-
-.endproc
-far_read_8_end_thunk:
-
-; Read 16-bit word from banked area
-; On entry: A = 6510 bank setting; Y:X = address
-; Return word in RISCV_data
-
-.proc far_read_16_thunk
-
-    stx pointer1+0
-    sty pointer1+1
-    ldx $00
-    ldy #0
-    sei
-    sta $00
-    lda (pointer1),y
-    sta RISCV_data+0
-    iny
-    lda (pointer1),y
-    sta RISCV_data+1
-    stx $00
-    cli
-    rts
-
-.endproc
-far_read_16_end_thunk:
-
-; Read 32-bit word from banked area
-; On entry: A = 6510 bank setting; Y:X = address
-; Return word in RISCV_data
-
-.proc far_read_32_thunk
-
-    stx pointer1+0
-    sty pointer1+1
-    ldx $00
-    ldy #0
-    sei
-    sta $00
-    lda (pointer1),y
-    sta RISCV_data+0
-    iny
-    lda (pointer1),y
-    sta RISCV_data+1
-    iny
-    lda (pointer1),y
-    sta RISCV_data+2
-    iny
-    lda (pointer1),y
-    sta RISCV_data+3
-    stx $00
-    cli
-    rts
-
-.endproc
-far_read_32_end_thunk:
-
-; Write byte to banked area
-; On entry: A = 6510 bank setting; Y:X = address; byte in RISCV_data
-
-.proc far_write_8_thunk
-
-    stx pointer1+0
-    sty pointer1+1
-    ldx $00
-    ldy #0
-    sei
-    sta $00
-    lda RISCV_data+0
-    sta (pointer1),y
-    stx $00
-    cli
-    rts
-
-.endproc
-far_write_8_end_thunk:
-
-; Write 16-bit word to banked area
-; On entry: A = 6510 bank setting; Y:X = address; word in RISCV_data
-
-.proc far_write_16_thunk
-
-    stx pointer1+0
-    sty pointer1+1
-    ldx $00
-    ldy #0
-    sei
-    sta $00
-    lda RISCV_data+0
-    sta (pointer1),y
-    iny
-    lda RISCV_data+1
-    sta (pointer1),y
-    stx $00
-    cli
-    rts
-
-.endproc
-far_write_16_end_thunk:
-
-; Write 32-bit word to banked area
-; On entry: A = 6510 bank setting; Y:X = address; word in RISCV_data
-
-.proc far_write_32_thunk
-
-    stx pointer1+0
-    sty pointer1+1
-    ldx $00
-    ldy #0
-    sei
-    sta $00
-    lda RISCV_data+0
-    sta (pointer1),y
-    iny
-    lda RISCV_data+1
-    sta (pointer1),y
-    iny
-    lda RISCV_data+2
-    sta (pointer1),y
-    iny
-    lda RISCV_data+3
-    sta (pointer1),y
-    stx $00
-    cli
-    rts
-
-.endproc
-far_write_32_end_thunk:
 
 ; This copies the RISC-V interpreter into RAM
 

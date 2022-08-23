@@ -128,12 +128,6 @@ far_call: .res 32
 cold_start_jump: .res 16
 warm_start_jump: .res 16
 warm_start_return: .res 16
-far_read_8: .res 32
-far_read_16: .res 32
-far_read_32: .res 48
-far_write_8: .res 32
-far_write_16: .res 32
-far_write_32: .res 48
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; The file browser uses this area

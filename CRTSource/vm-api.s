@@ -130,7 +130,7 @@ bad_address:
         adc #>c64_graph_screen
         tay
         lda #$00    ; I/O and ROMs switched out
-        jmp far_read_8
+        beq far_read_8
     space_4:
     dey
     bne space_5
@@ -155,7 +155,18 @@ bad_address:
         adc #>c64_character_rom
         tay
         lda #$04    ; Switch to character ROM
-        jmp far_read_8
+    far_read_8:
+        stx pointer1+0
+        sty pointer1+1
+        ldx $00
+        ldy #0
+        sei
+        sta $00
+        lda (pointer1),y
+        stx $00
+        sta RISCV_data+0
+        cli
+        rts
 
 bad_address:
     lda #ERR_bad_byte_read
@@ -214,7 +225,7 @@ bad_address:
         adc #>c64_graph_screen
         tay
         lda #$00    ; I/O and ROMs switched out
-        jmp far_read_16
+        beq far_read_16
     space_4:
     dey
     bne space_5
@@ -242,7 +253,21 @@ bad_address:
         adc #>c64_character_rom
         tay
         lda #$04    ; Switch to character ROM
-        jmp far_read_16
+    far_read_16:
+        stx pointer1+0
+        sty pointer1+1
+        ldx $00
+        ldy #0
+        sei
+        sta $00
+        lda (pointer1),y
+        sta RISCV_data+0
+        iny
+        lda (pointer1),y
+        stx $00
+        cli
+        sta RISCV_data+1
+        rts
 
 bad_address:
     lda #ERR_bad_hword_read
@@ -258,7 +283,7 @@ bad_address:
     ; Check address alignment
     lda RISCV_address+0
     and #$03
-    bne bad_address
+    bne bad_address_0
 
     ldy RISCV_address+3 ; Select according to address space
     dey
@@ -271,7 +296,7 @@ bad_address:
     space_2:
     ; No space other than 1 allows this byte to be non-zero
     lda RISCV_address+2
-    bne bad_address
+    bne bad_address_0
     ; This part is common to spaces 2, 3, 4 and 5
     ldx RISCV_address+0
     lda RISCV_address+1
@@ -307,7 +332,7 @@ bad_address:
         adc #>c64_graph_screen
         tay
         lda #$00    ; I/O and ROMs switched out
-        jmp far_read_32
+        beq far_read_32
     space_4:
     dey
     bne space_5
@@ -333,6 +358,7 @@ bad_address:
         rts
     space_5:
     dey
+    bad_address_0:
     bne bad_address
         ; Address space 5: C64 character ROM
         cmp #>c64_character_size
@@ -341,7 +367,27 @@ bad_address:
         adc #>c64_character_rom
         tay
         lda #$04    ; Switch to character ROM
-        jmp far_read_32
+    far_read_32:
+        stx pointer1+0
+        sty pointer1+1
+        ldx $00
+        ldy #0
+        sei
+        sta $00
+        lda (pointer1),y
+        sta RISCV_data+0
+        iny
+        lda (pointer1),y
+        sta RISCV_data+1
+        iny
+        lda (pointer1),y
+        sta RISCV_data+2
+        iny
+        lda (pointer1),y
+        stx $00
+        cli
+        sta RISCV_data+3
+        rts
 
 bad_address:
     lda #ERR_bad_dword_read
@@ -397,7 +443,17 @@ bad_address:
         adc #>c64_graph_screen
         tay
         lda #$00    ; I/O and ROMs switched out
-        jmp far_write_8
+        stx pointer1+0
+        sty pointer1+1
+        ldx $00
+        ldy #0
+        sei
+        sta $00
+        lda RISCV_data+0
+        sta (pointer1),y
+        stx $00
+        cli
+        rts
     space_4:
     dey
     bne bad_address
@@ -474,7 +530,20 @@ bad_address:
         adc #>c64_graph_screen
         tay
         lda #$00    ; I/O and ROMs switched out
-        jmp far_write_16
+        stx pointer1+0
+        sty pointer1+1
+        ldx $00
+        ldy #0
+        sei
+        sta $00
+        lda RISCV_data+0
+        sta (pointer1),y
+        iny
+        lda RISCV_data+1
+        sta (pointer1),y
+        stx $00
+        cli
+        rts
     space_4:
     dey
     bne bad_address
@@ -508,7 +577,7 @@ bad_address:
     ; Check alignment of address
     lda RISCV_address+0
     and #$03
-    bne bad_address
+    bne bad_address_0
 
     ldy RISCV_address+3 ; Select according to address space
     dey
@@ -517,13 +586,15 @@ bad_address:
         ; Check for valid write address
         lda RISCV_address+2
         cmp RISCV_fence
-        bcc bad_address
+        ; If C is clear, so is Z; so branch to a BNE still works
+        bcc bad_address_0
         lda #4
         ldx #$90
         jmp reu_xfer
     space_2:
     ; No space other than 1 allows this byte to be non-zero
     lda RISCV_address+2
+    bad_address_0:
     bne bad_address
     ; This part is common to spaces 2, 3 and 4
     ldx RISCV_address+0
@@ -560,7 +631,26 @@ bad_address:
         adc #>c64_graph_screen
         tay
         lda #$00    ; I/O and ROMs switched out
-        jmp far_write_32
+        stx pointer1+0
+        sty pointer1+1
+        ldx $00
+        ldy #0
+        sei
+        sta $00
+        lda RISCV_data+0
+        sta (pointer1),y
+        iny
+        lda RISCV_data+1
+        sta (pointer1),y
+        iny
+        lda RISCV_data+2
+        sta (pointer1),y
+        iny
+        lda RISCV_data+3
+        sta (pointer1),y
+        stx $00
+        cli
+        rts
     space_4:
     dey
     bne bad_address
