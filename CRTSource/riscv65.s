@@ -107,15 +107,12 @@ RISCV_instruction:
 
 dispatch_instruction:
     ; Decode the lower seven bits
-    lda RISCV_opcode+0      ; (3)
-    asl a                   ; (2)
-    tax                     ; (2)
-    lda dispatch_main+0,x   ; (4)
-    sta pointer1+0          ; (3)
-    lda dispatch_main+1,x   ; (4)
-    sta pointer1+1          ; (3)
-    jmp (pointer1)          ; (5)
-                            ; total: 26
+    lda RISCV_opcode+0  ; (3)
+    asl a               ; (2)
+    sta jump+1          ; (4) self-modifying code here
+    jump:
+    jmp (dispatch_main) ; (5) actually (dispatch_main,a)
+                        ; total: 14
 
 .segment "ROPAGE"
 .align 256
@@ -395,11 +392,7 @@ dispatch_main:
     lda RISCV_opcode+1
     and #$70
     ora #table_LOAD
-    tax
-    lda dispatch_funct3+0,x
-    sta pointer1+0
-    lda dispatch_funct3+1,x
-    sta pointer1+1
+    sta jump+1           ; self-modifying code here
 
     get_imm12
     get_rs1_x
@@ -418,7 +411,8 @@ dispatch_main:
     adc imm_2 ; not imm_3
     sta RISCV_address+3
 
-    jmp (pointer1)
+    jump:
+    jmp (dispatch_funct3)  ; actually an indexed jump
 
 .endproc
 
@@ -549,12 +543,9 @@ bad_opcode:
     lda RISCV_opcode+1
     and #$70
    ;ora #table_OP_IMM   ; equal to zero
-    tax
-    lda dispatch_funct3+0,x
-    sta pointer1+0
-    lda dispatch_funct3+1,x
-    sta pointer1+1
-    jmp (pointer1)
+    sta jump+1          ; self-modifying code here
+    jump:
+    jmp (dispatch_funct3) ; actually (dispatch_funct3,a)
 
 .endproc
 
@@ -847,11 +838,7 @@ bad_opcode:
     lda RISCV_opcode+1
     and #$70
     ora #table_STORE
-    tax
-    lda dispatch_funct3+0,x
-    sta pointer1+0
-    lda dispatch_funct3+1,x
-    sta pointer1+1
+    sta jump+1          ; self-modifying code here
 
     get_imm_S
     get_rs1_x
@@ -875,7 +862,8 @@ bad_opcode:
     lda RISCV_ireg_0,y
     sta RISCV_data+0
 
-    jmp (pointer1)
+    jump:
+    jmp (dispatch_funct3)
 
 .endproc
 
@@ -926,13 +914,10 @@ bad_opcode:
     lda RISCV_opcode+1
     and #$70            ; funct3
     ora OP_table,x
-    tax
-    lda dispatch_funct3+0,x
-    sta pointer1+0
-    lda dispatch_funct3+1,x
-    sta pointer1+1
+    sta @jump+1         ; self-modifying code here
     get_rs1_rs2
-    jmp (pointer1)
+    @jump:
+    jmp (dispatch_funct3) ; actually (dispatch_funct3,a)
 
 .endproc
 
@@ -1779,13 +1764,10 @@ do_instruction:
     lda RISCV_opcode+1
     and #$70
     ora #table_BRANCH
-    tax
-    lda dispatch_funct3+0,x
-    sta pointer1+0
-    lda dispatch_funct3+1,x
-    sta pointer1+1
+    sta jump+1          ; self-modifying code here
     get_rs1_rs2
-    jmp (pointer1)
+    jump:
+    jmp (dispatch_funct3)
 
 .endproc
 

@@ -2192,12 +2192,10 @@ cheap_label_scope1:
 
     lda pointer1+0
     and #$1F
-    tax
-    lda sll_dispatch_lo,x
-    sta pointer1+0
-    lda sll_dispatch_hi,x
-    sta pointer1+1
-    jmp (pointer1)
+    asl a
+    sta jump+1      ; self-modifying code
+    jump:
+    jmp (shift_dispatch)
 
 .endproc
 
@@ -2663,12 +2661,11 @@ cheap_label_scope1:
 
     lda pointer1+0
     and #$1F
-    tax
-    lda srl_dispatch_lo,x
-    sta pointer1+0
-    lda srl_dispatch_hi,x
-    sta pointer1+1
-    jmp (pointer1)
+    asl a
+    ora #srl_dispatch-shift_dispatch
+    sta jump+1      ; self-modifying code
+    jump:
+    jmp (shift_dispatch)
 
 .endproc
 
@@ -3134,12 +3131,11 @@ cheap_label_scope1:
 
     lda pointer1+0
     and #$1F
-    tax
-    lda sra_dispatch_lo,x
-    sta pointer1+0
-    lda sra_dispatch_hi,x
-    sta pointer1+1
-    jmp (pointer1)
+    asl a
+    ora #sra_dispatch-shift_dispatch
+    sta jump+1      ; self-modifying code
+    jump:
+    jmp (shift_dispatch)
 
 .endproc
 
@@ -3648,210 +3644,108 @@ cheap_label_scope1:
 .align 256
 
 ; Dispatch table for shift_left
-sll_dispatch_lo:
-    .byte <sll_0
-    .byte <sll_1
-    .byte <sll_2
-    .byte <sll_3
-    .byte <sll_4
-    .byte <sll_5
-    .byte <sll_6
-    .byte <sll_7
-    .byte <sll_8
-    .byte <sll_9
-    .byte <sll_10
-    .byte <sll_11
-    .byte <sll_12
-    .byte <sll_13
-    .byte <sll_14
-    .byte <sll_15
-    .byte <sll_16
-    .byte <sll_17
-    .byte <sll_18
-    .byte <sll_19
-    .byte <sll_20
-    .byte <sll_21
-    .byte <sll_22
-    .byte <sll_23
-    .byte <sll_24
-    .byte <sll_25
-    .byte <sll_26
-    .byte <sll_27
-    .byte <sll_28
-    .byte <sll_29
-    .byte <sll_30
-    .byte <sll_31
-
-sll_dispatch_hi:
-    .byte >sll_0
-    .byte >sll_1
-    .byte >sll_2
-    .byte >sll_3
-    .byte >sll_4
-    .byte >sll_5
-    .byte >sll_6
-    .byte >sll_7
-    .byte >sll_8
-    .byte >sll_9
-    .byte >sll_10
-    .byte >sll_11
-    .byte >sll_12
-    .byte >sll_13
-    .byte >sll_14
-    .byte >sll_15
-    .byte >sll_16
-    .byte >sll_17
-    .byte >sll_18
-    .byte >sll_19
-    .byte >sll_20
-    .byte >sll_21
-    .byte >sll_22
-    .byte >sll_23
-    .byte >sll_24
-    .byte >sll_25
-    .byte >sll_26
-    .byte >sll_27
-    .byte >sll_28
-    .byte >sll_29
-    .byte >sll_30
-    .byte >sll_31
+.global shift_dispatch
+shift_dispatch:
+sll_dispatch:
+    .word sll_0
+    .word sll_1
+    .word sll_2
+    .word sll_3
+    .word sll_4
+    .word sll_5
+    .word sll_6
+    .word sll_7
+    .word sll_8
+    .word sll_9
+    .word sll_10
+    .word sll_11
+    .word sll_12
+    .word sll_13
+    .word sll_14
+    .word sll_15
+    .word sll_16
+    .word sll_17
+    .word sll_18
+    .word sll_19
+    .word sll_20
+    .word sll_21
+    .word sll_22
+    .word sll_23
+    .word sll_24
+    .word sll_25
+    .word sll_26
+    .word sll_27
+    .word sll_28
+    .word sll_29
+    .word sll_30
+    .word sll_31
 
 ; Dispatch table for shift_right_unsigned
-srl_dispatch_lo:
-    .byte <srl_0
-    .byte <srl_1
-    .byte <srl_2
-    .byte <srl_3
-    .byte <srl_4
-    .byte <srl_5
-    .byte <srl_6
-    .byte <srl_7
-    .byte <srl_8
-    .byte <srl_9
-    .byte <srl_10
-    .byte <srl_11
-    .byte <srl_12
-    .byte <srl_13
-    .byte <srl_14
-    .byte <srl_15
-    .byte <srl_16
-    .byte <srl_17
-    .byte <srl_18
-    .byte <srl_19
-    .byte <srl_20
-    .byte <srl_21
-    .byte <srl_22
-    .byte <srl_23
-    .byte <srl_24
-    .byte <srl_25
-    .byte <srl_26
-    .byte <srl_27
-    .byte <srl_28
-    .byte <srl_29
-    .byte <srl_30
-    .byte <srl_31
-
-srl_dispatch_hi:
-    .byte >srl_0
-    .byte >srl_1
-    .byte >srl_2
-    .byte >srl_3
-    .byte >srl_4
-    .byte >srl_5
-    .byte >srl_6
-    .byte >srl_7
-    .byte >srl_8
-    .byte >srl_9
-    .byte >srl_10
-    .byte >srl_11
-    .byte >srl_12
-    .byte >srl_13
-    .byte >srl_14
-    .byte >srl_15
-    .byte >srl_16
-    .byte >srl_17
-    .byte >srl_18
-    .byte >srl_19
-    .byte >srl_20
-    .byte >srl_21
-    .byte >srl_22
-    .byte >srl_23
-    .byte >srl_24
-    .byte >srl_25
-    .byte >srl_26
-    .byte >srl_27
-    .byte >srl_28
-    .byte >srl_29
-    .byte >srl_30
-    .byte >srl_31
+srl_dispatch:
+    .word srl_0
+    .word srl_1
+    .word srl_2
+    .word srl_3
+    .word srl_4
+    .word srl_5
+    .word srl_6
+    .word srl_7
+    .word srl_8
+    .word srl_9
+    .word srl_10
+    .word srl_11
+    .word srl_12
+    .word srl_13
+    .word srl_14
+    .word srl_15
+    .word srl_16
+    .word srl_17
+    .word srl_18
+    .word srl_19
+    .word srl_20
+    .word srl_21
+    .word srl_22
+    .word srl_23
+    .word srl_24
+    .word srl_25
+    .word srl_26
+    .word srl_27
+    .word srl_28
+    .word srl_29
+    .word srl_30
+    .word srl_31
 
 ; Dispatch table for shift_right_signed
-sra_dispatch_lo:
-    .byte <sra_0
-    .byte <sra_1
-    .byte <sra_2
-    .byte <sra_3
-    .byte <sra_4
-    .byte <sra_5
-    .byte <sra_6
-    .byte <sra_7
-    .byte <sra_8
-    .byte <sra_9
-    .byte <sra_10
-    .byte <sra_11
-    .byte <sra_12
-    .byte <sra_13
-    .byte <sra_14
-    .byte <sra_15
-    .byte <sra_16
-    .byte <sra_17
-    .byte <sra_18
-    .byte <sra_19
-    .byte <sra_20
-    .byte <sra_21
-    .byte <sra_22
-    .byte <sra_23
-    .byte <sra_24
-    .byte <sra_25
-    .byte <sra_26
-    .byte <sra_27
-    .byte <sra_28
-    .byte <sra_29
-    .byte <sra_30
-    .byte <sra_31
-
-sra_dispatch_hi:
-    .byte >sra_0
-    .byte >sra_1
-    .byte >sra_2
-    .byte >sra_3
-    .byte >sra_4
-    .byte >sra_5
-    .byte >sra_6
-    .byte >sra_7
-    .byte >sra_8
-    .byte >sra_9
-    .byte >sra_10
-    .byte >sra_11
-    .byte >sra_12
-    .byte >sra_13
-    .byte >sra_14
-    .byte >sra_15
-    .byte >sra_16
-    .byte >sra_17
-    .byte >sra_18
-    .byte >sra_19
-    .byte >sra_20
-    .byte >sra_21
-    .byte >sra_22
-    .byte >sra_23
-    .byte >sra_24
-    .byte >sra_25
-    .byte >sra_26
-    .byte >sra_27
-    .byte >sra_28
-    .byte >sra_29
-    .byte >sra_30
-    .byte >sra_31
-
-.align 256
+sra_dispatch:
+    .word sra_0
+    .word sra_1
+    .word sra_2
+    .word sra_3
+    .word sra_4
+    .word sra_5
+    .word sra_6
+    .word sra_7
+    .word sra_8
+    .word sra_9
+    .word sra_10
+    .word sra_11
+    .word sra_12
+    .word sra_13
+    .word sra_14
+    .word sra_15
+    .word sra_16
+    .word sra_17
+    .word sra_18
+    .word sra_19
+    .word sra_20
+    .word sra_21
+    .word sra_22
+    .word sra_23
+    .word sra_24
+    .word sra_25
+    .word sra_26
+    .word sra_27
+    .word sra_28
+    .word sra_29
+    .word sra_30
+    .word sra_31
