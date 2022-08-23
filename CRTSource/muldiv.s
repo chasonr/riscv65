@@ -3644,7 +3644,6 @@ cheap_label_scope1:
 .align 256
 
 ; Dispatch table for shift_left
-.global shift_dispatch
 shift_dispatch:
 sll_dispatch:
     .word sll_0
