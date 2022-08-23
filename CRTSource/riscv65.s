@@ -8,6 +8,9 @@
 .include "muldiv.inc"
 .include "riscv65.inc"
 .include "vm-api.inc"
+;;;;
+.include "kernal.inc"
+;;;;
 
 ; Fetch one opcode into RISCV_opcode
 .macro RISCV_fetch
@@ -54,7 +57,7 @@
 
     ; Save the stack pointer
     tsx
-    sta RISCV_saved_sp
+    stx RISCV_saved_sp
 
     ; Set up the RISC-V state
     jsr RISCV_init
@@ -73,6 +76,11 @@
     ; Reset the stack pointer
     ldx RISCV_saved_sp
     txs
+
+    ; The emulation is called from bank 0 and must return there
+    lda #0
+    sta current_bank
+    sta $DE00
 
     rts
 
@@ -93,6 +101,14 @@
         :
     dex
     bpl zero_loop
+
+    ; Save the initial break
+    lda RISCV_break+0
+    sta RISCV_min_break+0
+    lda RISCV_break+1
+    sta RISCV_min_break+1
+    lda RISCV_break+2
+    sta RISCV_min_break+2
 
     ; Set up the API
     jsr_far RISCV_syscall_init_bank,RISCV_syscall_init_entry

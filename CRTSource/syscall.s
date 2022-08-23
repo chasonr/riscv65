@@ -799,7 +799,7 @@ end_read:
     lda RISCV_ireg_2+REG_a0
     sbc RISCV_min_break+2
     lda RISCV_ireg_3+REG_a0
-    sbc RISCV_min_break+3
+    sbc #$01
     bcc error
 
     ; The new break must be less than the current stack pointer
