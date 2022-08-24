@@ -217,7 +217,6 @@ SYS_chdir        = bad_ecall
 SYS_getdents     = bad_ecall
 SYS_lseek        = bad_ecall
 SYS_open         = bad_ecall
-SYS_link         = bad_ecall
 SYS_unlink       = bad_ecall
 SYS_mkdir        = bad_ecall
 SYS_access       = bad_ecall
@@ -225,6 +224,15 @@ SYS_stat         = bad_ecall
 SYS_lstat        = bad_ecall
 SYS_rmdir        = bad_ecall
 SYS_rename       = bad_ecall
+
+; Create a hard link
+; Newlib can call this, but the file system doesn't support it
+.proc SYS_link
+
+    set_errno ENOTSUP
+    rts
+
+.endproc
 
 ; Read from the given file handle
 ; A0 = file handle
