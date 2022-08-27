@@ -1169,17 +1169,51 @@ times_13:
 
 .proc seek_and_read_dir_entry
 
+    ; Set the seek position for the directory in fatfs_file_data
     lda #<fatfs_file_data
     sta current_file+0
     lda #>fatfs_file_data
     sta current_file+1
     jsr set_seek_position
     bcs error
-    jmp read_dir_entry
+
+    ; Save the seek position for later use in the current-directory structure
+    lda longreg1+0
+    sta fatfs_file_data+fatfs_filedata::dir_entry+0
+    lda longreg1+1
+    sta fatfs_file_data+fatfs_filedata::dir_entry+1
+    lda longreg1+2
+    sta fatfs_file_data+fatfs_filedata::dir_entry+2
+    lda longreg1+3
+    sta fatfs_file_data+fatfs_filedata::dir_entry+3
+
+    ; Read the directory entry
+    jsr read_dir_entry
+    bcs error
+
+    ; Advance the file position
+    clc
+    lda fatfs_file_data+fatfs_filedata::cluster_ptr+0
+    adc #32
+    sta fatfs_file_data+fatfs_filedata::cluster_ptr+0
+    bcc :+
+    inc fatfs_file_data+fatfs_filedata::cluster_ptr+1
+    bne :+
+    inc fatfs_file_data+fatfs_filedata::cluster_ptr+2
+    :
+    rts
 
 error:
+    cmp #$100-ENOENT
+    bne :+
+        ldx #<not_found_error
+        ldy #>not_found_error
+        jsr set_error
+    :
     sec
     rts
+
+not_found_error: .asciiz "No such file or directory"
 
 .endproc
 
@@ -1189,15 +1223,6 @@ error:
 ; errno is ENOENT if end of directory
 
 .proc read_dir_entry
-
-    lda longreg1+0
-    sta fatfs_file_data+fatfs_filedata::dir_entry+0
-    lda longreg1+1
-    sta fatfs_file_data+fatfs_filedata::dir_entry+1
-    lda longreg1+2
-    sta fatfs_file_data+fatfs_filedata::dir_entry+2
-    lda longreg1+3
-    sta fatfs_file_data+fatfs_filedata::dir_entry+3
 
     jsr dos_seek
     bcs error
@@ -1214,29 +1239,11 @@ error:
     bcs error
 
     clc
-    lda fatfs_file_data+fatfs_filedata::cluster_ptr+0
-    adc #32
-    sta fatfs_file_data+fatfs_filedata::cluster_ptr+0
-    bcc :+
-    inc fatfs_file_data+fatfs_filedata::cluster_ptr+1
-    bne :+
-    inc fatfs_file_data+fatfs_filedata::cluster_ptr+2
-    :
-
-    clc
     rts
 
 error:
-    cmp #$100-ENOENT
-    bne :+
-        ldx #<not_found_error
-        ldy #>not_found_error
-        jsr set_error
-    :
     sec
     rts
-
-not_found_error: .asciiz "No such file or directory"
 
 .endproc
 
