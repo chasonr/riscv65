@@ -1236,13 +1236,7 @@ not_found_error: .asciiz "No such file or directory"
     lda #0
     sta pointer3+1
     jsr dos_read
-    bcs error
-
-    clc
-    rts
-
 error:
-    sec
     rts
 
 .endproc
