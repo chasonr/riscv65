@@ -244,6 +244,10 @@ FATFS_MAX_FILES = 16
 
 ; Current directory:
 FATFS_MAX_COMPONENTS = 16
+.struct fatfs_dir_entry
+    lfn_entry .dword
+    dir_entry .dword
+.endstruct
 .global fatfs_current_dir_num_components
 .global fatfs_current_dir
 
@@ -310,6 +314,7 @@ FATFS_MAX_COMPONENTS = 16
 .endstruct
 
 .global syscall_path
+.global syscall_dos_time
 .global syscall_dos_year
 .global syscall_dos_month
 .global syscall_dos_day

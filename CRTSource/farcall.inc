@@ -77,6 +77,9 @@ fatfs_read_mem_entry = $8009 + 4*3
 fatfs_read_bank = 1
 fatfs_read_entry = $8009 + 5*3
 
+fatfs_get_current_dir_bank = 1
+fatfs_get_current_dir_entry = $8009 + 6*3
+
 ; Bank 2; jump table in bank2.s
 ; These are located in main memory and reached by a JSR or JMP
 

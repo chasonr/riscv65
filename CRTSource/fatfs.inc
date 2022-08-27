@@ -7,5 +7,6 @@
 .global fatfs_seek
 .global fatfs_read_mem
 .global fatfs_read
+.global fatfs_get_current_dir
 
 ; vim: syntax=asm

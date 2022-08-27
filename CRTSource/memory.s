@@ -226,11 +226,11 @@ fatfs_free_changed: .res 1
 
 ; Current directory
 fatfs_current_dir_num_components: .res 1
-fatfs_current_dir: .res 8*FATFS_MAX_COMPONENTS
+fatfs_current_dir: .res .sizeof(fatfs_dir_entry)*FATFS_MAX_COMPONENTS
 
 ; Directory currently being searched
 fatfs_search_dir_num_components: .res 1
-fatfs_search_dir: .res 8*FATFS_MAX_COMPONENTS
+fatfs_search_dir: .res .sizeof(fatfs_dir_entry)*FATFS_MAX_COMPONENTS
 ; Length of path component being searched
 fatfs_component_len: .res 1
 ; Offset to last 13-byte segment of file name
@@ -296,6 +296,7 @@ reu_partial_size: .res 2
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 syscall_path: .res 256
+syscall_dos_time: .res 5
 syscall_dos_year: .res 2
 syscall_dos_month: .res 1
 syscall_dos_day: .res 1

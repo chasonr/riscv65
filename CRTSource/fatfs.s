@@ -67,7 +67,6 @@ open_files_hi:
 ; On return, pointer1 is 0 if successful; on failure, pointer1 is nonzero and
 ; ultidos_status contains an error message, converted to PETSCII
 
-.global fatfs_init
 .proc fatfs_init
 
     .struct boot_record
@@ -708,7 +707,6 @@ startup:
 ; * fatfs_search_dir and fatfs_search_dir_num_components are populated with
 ;   the path so far as it was found
 
-.global fatfs_search
 .proc fatfs_search
 
     ; Use longreg2 to advance through the file path, so pointer1 will be free
@@ -739,7 +737,7 @@ startup:
         ; Path does not begin with '/'; start from the current directory
         lda fatfs_current_dir_num_components
         sta fatfs_search_dir_num_components
-        ldy #8*FATFS_MAX_COMPONENTS
+        ldy #.sizeof(fatfs_dir_entry)*FATFS_MAX_COMPONENTS
         @copy_1:
             lda fatfs_current_dir-1,y
             sta fatfs_search_dir-1,y
@@ -751,6 +749,12 @@ startup:
     ; Populate fatfs_file_data with information about the starting directory
 
     jsr set_dir_from_search_dir
+    bcc :+
+        sta pointer1+0
+        lda #$FF
+        sta pointer1+1
+        rts
+    :
 
     ; Set current_file for routines that need it
     lda #<fatfs_file_data
@@ -823,6 +827,12 @@ startup:
                 beq dotdot_done
                     dec fatfs_search_dir_num_components
                     jsr set_dir_from_search_dir
+                    bcc :+
+                        sta pointer1+0
+                        lda #$FF
+                        sta pointer1+1
+                        rts
+                    :
                 dotdot_done:
                 jmp path_loop
         end_dotdot:
@@ -855,7 +865,7 @@ startup:
         dir_loop:
 
             ; Read one directory entry
-            jsr read_dir_entry
+            jsr seek_and_read_dir_entry
             jcs io_error
 
             ; The long file name match algorithm branches here on any failure,
@@ -917,7 +927,7 @@ startup:
             lfn_loop:
 
                 ; Read the next directory record
-                jsr read_dir_entry
+                jsr seek_and_read_dir_entry
                 jcs io_error
 
                 ; Check for end marker
@@ -984,24 +994,24 @@ startup:
         ldx fatfs_search_dir_num_components
         lda lshift3,x
         inx
-        sta fatfs_search_dir_num_components
+        stx fatfs_search_dir_num_components
         tax
         lda fatfs_file_data+fatfs_filedata::lfn_entry+0
-        sta fatfs_search_dir+0,x
+        sta fatfs_search_dir+fatfs_dir_entry::lfn_entry+0,x
         lda fatfs_file_data+fatfs_filedata::lfn_entry+1
-        sta fatfs_search_dir+1,x
+        sta fatfs_search_dir+fatfs_dir_entry::lfn_entry+1,x
         lda fatfs_file_data+fatfs_filedata::lfn_entry+2
-        sta fatfs_search_dir+2,x
+        sta fatfs_search_dir+fatfs_dir_entry::lfn_entry+2,x
         lda fatfs_file_data+fatfs_filedata::lfn_entry+3
-        sta fatfs_search_dir+3,x
+        sta fatfs_search_dir+fatfs_dir_entry::lfn_entry+3,x
         lda fatfs_file_data+fatfs_filedata::dir_entry+0
-        sta fatfs_search_dir+4,x
+        sta fatfs_search_dir+fatfs_dir_entry::dir_entry+0,x
         lda fatfs_file_data+fatfs_filedata::dir_entry+1
-        sta fatfs_search_dir+5,x
+        sta fatfs_search_dir+fatfs_dir_entry::dir_entry+1,x
         lda fatfs_file_data+fatfs_filedata::dir_entry+2
-        sta fatfs_search_dir+6,x
+        sta fatfs_search_dir+fatfs_dir_entry::dir_entry+2,x
         lda fatfs_file_data+fatfs_filedata::dir_entry+3
-        sta fatfs_search_dir+7,x
+        sta fatfs_search_dir+fatfs_dir_entry::dir_entry+3,x
 
         ; Advance to the next path component
         jsr next_component
@@ -1096,6 +1106,7 @@ times_13:
 .endproc
 
 ; Populate fatfs_file_data with the last directory in the search path
+; On error, return C set and -errno in A
 
 .proc set_dir_from_search_dir
 
@@ -1118,6 +1129,7 @@ times_13:
             sta fatfs_file_data+fatfs_filedata::cluster_lo+1
             sta fatfs_file_data+fatfs_filedata::cluster_hi+0
             sta fatfs_file_data+fatfs_filedata::cluster_hi+1
+            clc
             rts
 
         fat32_root:
@@ -1131,30 +1143,31 @@ times_13:
             sta fatfs_file_data+fatfs_filedata::cluster_hi+0
             lda #0
             sta fatfs_file_data+fatfs_filedata::cluster_hi+1
+            clc
             rts
 
     start_with_cluster:
 
-        ; Starting from the current directory
+        ; Starting from the last directory in the path
         lda lshift3,x
         tax
-        lda fatfs_search_dir-4,x
-        sta fatfs_file_data+fatfs_filedata::cluster_lo+0
-        lda fatfs_search_dir-3,x
-        sta fatfs_file_data+fatfs_filedata::cluster_lo+1
-        lda fatfs_search_dir-2,x
-        sta fatfs_file_data+fatfs_filedata::cluster_hi+0
-        lda fatfs_search_dir-1,x
-        sta fatfs_file_data+fatfs_filedata::cluster_hi+1
-        rts
+        lda fatfs_search_dir-.sizeof(fatfs_dir_entry)+fatfs_dir_entry::dir_entry+0,x
+        sta longreg1+0
+        lda fatfs_search_dir-.sizeof(fatfs_dir_entry)+fatfs_dir_entry::dir_entry+1,x
+        sta longreg1+1
+        lda fatfs_search_dir-.sizeof(fatfs_dir_entry)+fatfs_dir_entry::dir_entry+2,x
+        sta longreg1+2
+        lda fatfs_search_dir-.sizeof(fatfs_dir_entry)+fatfs_dir_entry::dir_entry+3,x
+        sta longreg1+3
+        jmp read_dir_entry
 
 .endproc
 
-; Read the next directory entry
+; Seek to and read the next directory entry
 ; On error, return C set and -errno in A
 ; errno is ENOENT if end of directory
 
-.proc read_dir_entry
+.proc seek_and_read_dir_entry
 
     lda #<fatfs_file_data
     sta current_file+0
@@ -1162,6 +1175,20 @@ times_13:
     sta current_file+1
     jsr set_seek_position
     bcs error
+    jmp read_dir_entry
+
+error:
+    sec
+    rts
+
+.endproc
+
+; Read a directory entry
+; longreg1 is the seek position of the directory entry
+; On error, return C set and -errno in A
+; errno is ENOENT if end of directory
+
+.proc read_dir_entry
 
     lda longreg1+0
     sta fatfs_file_data+fatfs_filedata::dir_entry+0
@@ -1732,6 +1759,168 @@ sub_32:
     iny
     sta (current_file),y
 
+    rts
+
+.endproc
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;                       Query the current directory                        ;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; Read the current directory
+; pointer1 points to an array of 256 bytes to receive the path
+; On successful return: pointer1 is 0
+; On error: pointer1 is set to -errno
+
+.proc fatfs_get_current_dir
+
+    ; dos_read uses pointer1, pointer2 and pointer3
+    ; dos_seek uses longreg1 and pointer1
+    ; Use pointer4 to point to the output buffer
+    path_ptr = pointer4
+
+    path_len = scratch_area+0
+    path_count = scratch_area+1
+    path_next = scratch_area+2
+
+    ; path_ptr <- pointer1
+    lda pointer1+0
+    sta path_ptr+0
+    lda pointer1+1
+    sta path_ptr+1
+
+    ; Check for the current directory being the root
+    lda fatfs_current_dir_num_components
+    bne :+
+        ldy #0
+        lda #'/'
+        sta (path_ptr),y
+        iny
+        lda #0
+        sta (path_ptr),y
+        sta pointer1+0
+        sta pointer1+1
+        rts
+    :
+
+    ; TODO: first try retrieving the long names
+
+do_short_name:
+
+    ; path_count <- 0 and path_len <- 0
+    lda #0
+    sta path_count
+    sta path_len
+
+    short_name_loop:
+
+        ; Seek to the short name record
+        ldx path_count
+        ldy lshift3,x
+        lda fatfs_current_dir+fatfs_dir_entry::dir_entry+0,y
+        sta longreg1+0
+        lda fatfs_current_dir+fatfs_dir_entry::dir_entry+1,y
+        sta longreg1+1
+        lda fatfs_current_dir+fatfs_dir_entry::dir_entry+2,y
+        sta longreg1+2
+        lda fatfs_current_dir+fatfs_dir_entry::dir_entry+3,y
+        sta longreg1+3
+        jsr dos_seek
+        bcs error
+
+        ; Read into memory
+        lda #<fatfs_file_data
+        sta pointer2+0
+        lda #>fatfs_file_data
+        sta pointer2+1
+        lda #32
+        sta pointer3+0
+        lda #0
+        sta pointer3+1
+        jsr dos_read
+        bcs error
+
+        ; Add a slash to the path
+        ldy path_len
+        lda #'/'
+        sta (path_ptr),y
+        iny
+
+        ; If first byte is $05, convert to $E5; otherwise, pass as is
+        lda fatfs_file_data+0
+        cmp #$05
+        bne :+
+            lda #$E5
+        :
+        sta (path_ptr),y
+        iny
+
+        ; Pass seven more bytes as they are
+        ldx #1
+        @copy_name:
+            lda fatfs_file_data,x
+            sta (path_ptr),y
+        iny
+        inx
+        cpx #8
+        bcc @copy_name
+
+        ; Trim any trailing spaces
+        @trim_spaces_1:
+            dey
+            lda (path_ptr),y
+            cmp #' '
+        beq @trim_spaces_1
+        iny
+
+        ; Add a period to the path
+        lda #'.'
+        sta (path_ptr),y
+        iny
+
+        ; Pass three more bytes as they are
+        @copy_ext:
+            lda fatfs_file_data,x
+            sta (path_ptr),y
+        iny
+        inx
+        cpx #11
+        bcc @copy_ext
+
+        ; Trim any trailing spaces
+        @trim_spaces_2:
+            dey
+            lda (path_ptr),y
+            cmp #' '
+        beq @trim_spaces_2
+        ; Trim the period if that is the last character
+        cmp #'.'
+        beq :+
+            iny
+        :
+
+        sty path_len
+
+    inc path_count
+    lda path_count
+    cmp fatfs_current_dir_num_components
+    jcc short_name_loop
+
+end_path:
+    ; Place a null character at the end and return success
+
+    lda #0
+    ldy path_len
+    sta (path_ptr),y
+    sta pointer1+0
+    sta pointer1+1
+    rts
+
+error:
+    lda #$100-EIO
+    sta pointer1+0
+    lda #$FF
+    sta pointer1+1
     rts
 
 .endproc

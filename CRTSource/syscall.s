@@ -10,6 +10,7 @@
 .include "errno.inc"
 .include "reu.inc"
 .include "stat.inc"
+.include "cmd.inc"
 
 .proc RISCV_syscall_init
 
@@ -212,16 +213,11 @@ end_syscall_table:
 first_file_handle = 3
 
 ; FIXME Stub out system calls not yet supported
-SYS_getcwd       = bad_ecall
-SYS_chdir        = bad_ecall
 SYS_getdents     = bad_ecall
 SYS_lseek        = bad_ecall
 SYS_open         = bad_ecall
 SYS_unlink       = bad_ecall
 SYS_mkdir        = bad_ecall
-SYS_access       = bad_ecall
-SYS_stat         = bad_ecall
-SYS_lstat        = bad_ecall
 SYS_rmdir        = bad_ecall
 SYS_rename       = bad_ecall
 
@@ -230,6 +226,151 @@ SYS_rename       = bad_ecall
 .proc SYS_link
 
     set_errno ENOTSUP
+    rts
+
+.endproc
+
+; Return the current directory
+; A0 = address to receive the current directory
+; A1 = length of buffer at A0
+; On return: A0 = 0 if success, or -errno if error
+
+.proc SYS_getcwd
+
+    ; Read the current directory into local memory
+    lda #<syscall_path
+    sta pointer1+0
+    lda #>syscall_path
+    sta pointer1+1
+    jsr_far fatfs_get_current_dir_bank,fatfs_get_current_dir_entry
+    lda pointer1+0
+    bne error
+
+    ; Determine the length of the path
+    ldy #0
+    path_len:
+        lda syscall_path,y
+        beq end_path_len
+    iny
+    bne path_len
+    end_path_len:
+
+    ; Is the caller's buffer long enough?
+    lda RISCV_ireg_1+REG_a0
+    ora RISCV_ireg_2+REG_a0
+    ora RISCV_ireg_3+REG_a0
+    bne :+
+    cpy RISCV_ireg_0+REG_a0
+    bcc :+
+        lda #$100-ERANGE
+        jmp error
+    :
+
+    ; Set the write length
+    ldx #0
+    stx longreg2+2
+    stx longreg2+3
+    iny
+    bne :+
+        inx
+    :
+    sty longreg2+0
+    stx longreg2+1
+    ; Set the write address
+    lda RISCV_ireg_0+REG_a0
+    sta longreg1+0
+    lda RISCV_ireg_1+REG_a0
+    sta longreg1+1
+    lda RISCV_ireg_2+REG_a0
+    sta longreg1+2
+    lda RISCV_ireg_3+REG_a0
+    sta longreg1+3
+
+    ; Check that we can write
+    jsr check_write
+    bcs efault
+
+    ; Do the transfer
+    set_reu_address longreg1
+    set_xfer_size longreg2
+    set_local_address syscall_path
+    jsr reu_write
+
+    ; Return success
+    lda #0
+    sta RISCV_ireg_0+REG_a0
+    sta RISCV_ireg_1+REG_a0
+    sta RISCV_ireg_2+REG_a0
+    sta RISCV_ireg_3+REG_a0
+    rts
+
+efault:
+    lda #$100-EFAULT
+error:
+    set_errno
+    rts
+
+.endproc
+
+; Change current directory
+; A0 = address of directory path
+; Return 0 in A0 if success, else -errno
+
+.proc SYS_chdir
+
+    ; Read the path into local memory
+
+    lda RISCV_ireg_0+REG_a0
+    sta longreg1+0
+    lda RISCV_ireg_1+REG_a0
+    sta longreg1+1
+    lda RISCV_ireg_2+REG_a0
+    sta longreg1+2
+    lda RISCV_ireg_3+REG_a0
+    sta longreg1+3
+    jsr read_path
+    bcs error
+
+    ; Search for the path
+
+    lda #<syscall_path
+    sta pointer1+0
+    lda #>syscall_path
+    sta pointer1+1
+    jsr_far fatfs_search_bank,fatfs_search_entry
+    lda pointer1+0
+    bne error
+
+    ; Path must be a directory
+
+    lda fatfs_file_data+fatfs_filedata::attributes
+    and #ATTR_DIRECTORY
+    beq not_directory
+
+    ; Copy search path to current directory
+
+    lda fatfs_search_dir_num_components
+    sta fatfs_current_dir_num_components
+    ldy #.sizeof(fatfs_dir_entry)*FATFS_MAX_COMPONENTS
+    @copy_1:
+        lda fatfs_search_dir-1,y
+        sta fatfs_current_dir-1,y
+    dey
+    bne @copy_1 
+
+    ; Return success
+
+    lda #0
+    sta RISCV_ireg_0+REG_a0
+    sta RISCV_ireg_1+REG_a0
+    sta RISCV_ireg_2+REG_a0
+    sta RISCV_ireg_3+REG_a0
+    rts
+
+not_directory:
+    lda #$100-ENOTDIR
+error:
+    set_errno
     rts
 
 .endproc
@@ -618,7 +759,6 @@ end_read:
 
 ; Get time of day
 ; A0 == pointer to struct timeval that will receive the time
-.global SYS_gettimeofday
 .proc SYS_gettimeofday
 
     ; Set up the transfer area
@@ -839,6 +979,342 @@ error:
 
 .endproc
 
+; Check a file for accessibility
+; Path is in A0
+; Access flags are in A1:
+; X_OK 1
+; W_OK 2
+; R_OK 4
+
+.proc SYS_access
+
+    ; Read the path to syscall_path
+
+    lda RISCV_ireg_0+REG_a0
+    sta longreg1+0
+    lda RISCV_ireg_1+REG_a0
+    sta longreg1+1
+    lda RISCV_ireg_2+REG_a0
+    sta longreg1+2
+    lda RISCV_ireg_3+REG_a0
+    sta longreg1+3
+    jsr read_path
+    bcs error
+
+    ; Search for the file
+
+    lda #<syscall_path
+    sta pointer1+0
+    lda #>syscall_path
+    sta pointer1+1
+    jsr_far fatfs_search_bank,fatfs_search_entry
+    lda pointer1+0
+    bne error
+
+    ; The file at least exists. If W_OK, check for a writable file
+    lda RISCV_ireg_0+REG_a0
+    and #$02
+    beq file_ok
+    lda fatfs_file_data+fatfs_filedata::attributes
+    and #ATTR_READONLY
+    bne access_vio
+
+file_ok:
+    ; We have access to the file
+    lda #0
+    sta RISCV_ireg_0+REG_a0
+    sta RISCV_ireg_1+REG_a0
+    sta RISCV_ireg_2+REG_a0
+    sta RISCV_ireg_3+REG_a0
+    rts
+
+access_vio:
+    lda #$100-EACCES
+error:
+    set_errno
+    rts
+
+.endproc
+
+; Because no FAT file system supports hard links, SYS_lstat is the same
+; as SYS_stat
+SYS_lstat = SYS_stat
+
+; Return "stat" information on a named file
+; Path is in A0
+; Pointer to stat structure is in A1
+.proc SYS_stat
+
+    ; Read the path to syscall_path
+
+    lda RISCV_ireg_0+REG_a0
+    sta longreg1+0
+    lda RISCV_ireg_1+REG_a0
+    sta longreg1+1
+    lda RISCV_ireg_2+REG_a0
+    sta longreg1+2
+    lda RISCV_ireg_3+REG_a0
+    sta longreg1+3
+    jsr read_path
+    bcs error
+
+    ; Search for the file
+
+    lda #<syscall_path
+    sta pointer1+0
+    lda #>syscall_path
+    sta pointer1+1
+    jsr_far fatfs_search_bank,fatfs_search_entry
+    lda pointer1+0
+    bne error
+
+    ; Convert internal file data to stat structure
+    lda #<fatfs_file_data
+    sta current_file+0
+    lda #>fatfs_file_data
+    sta current_file+1
+    jsr get_file_stat
+
+    ; Pass to the caller
+    lda RISCV_ireg_0+REG_a1
+    sta longreg1+0
+    lda RISCV_ireg_1+REG_a1
+    sta longreg1+1
+    lda RISCV_ireg_2+REG_a1
+    sta longreg1+2
+    lda RISCV_ireg_3+REG_a1
+    sta longreg1+3
+    lda #.sizeof(kernel_stat)
+    sta longreg2+0
+    lda #0
+    sta longreg2+1
+    sta longreg2+2
+    sta longreg2+3
+    jsr check_write
+    bcs efault
+    jsr write_io_xfer
+
+    lda #0
+    sta RISCV_ireg_0+REG_a0
+    sta RISCV_ireg_1+REG_a0
+    sta RISCV_ireg_2+REG_a0
+    sta RISCV_ireg_3+REG_a0
+    rts
+
+efault:
+    lda #$100-EFAULT
+error:
+    set_errno
+    rts
+
+.endproc
+
+; Convert file data structure at (current_file) to stat structure, and pass
+; to the caller
+; Common to SYS_stat and SYS_fstat
+
+.proc get_file_stat
+
+    ; Clear the transfer area
+    lda #0
+    ldx #.sizeof(kernel_stat)
+    clear:
+        sta scratch_area-1,x
+    dex
+    bne clear
+
+    ; Set st_atim to -1
+    lda #$FF
+    ldx #.sizeof(timeval)
+    minus_one:
+        sta scratch_area+kernel_stat::st_atim-1,x
+    dex
+    bne minus_one
+
+    ; "Inode number" is the location of the directory entry
+    ldy #fatfs_filedata::dir_entry
+    lda (current_file),y
+    sta scratch_area+kernel_stat::st_ino+0
+    iny
+    lda (current_file),y
+    sta scratch_area+kernel_stat::st_ino+1
+    iny
+    lda (current_file),y
+    sta scratch_area+kernel_stat::st_ino+2
+    iny
+    lda (current_file),y
+    sta scratch_area+kernel_stat::st_ino+3
+
+    ; Block size
+    lda fatfs_cluster_size
+    sta scratch_area+kernel_stat::st_blksize+1
+
+    ; Creation time
+    ldy #fatfs_filedata::ctime_lo
+    lda (current_file),y
+    sta syscall_dos_time+0
+    ldy #fatfs_filedata::ctime
+    lda (current_file),y
+    sta syscall_dos_time+1
+    iny
+    lda (current_file),y
+    sta syscall_dos_time+2
+    ldy #fatfs_filedata::cdate
+    lda (current_file),y
+    sta syscall_dos_time+3
+    iny
+    lda (current_file),y
+    sta syscall_dos_time+4
+    jsr dos_to_unix_time
+    ldx #.sizeof(timeval)
+    @copy_1:
+        lda syscall_unix_time-1,x
+        sta scratch_area+kernel_stat::st_ctim-1,x
+    dex
+    bne @copy_1
+
+    ; Modification time
+    lda #0
+    sta syscall_dos_time+0
+    ldy #fatfs_filedata::mtime
+    lda (current_file),y
+    sta syscall_dos_time+1
+    iny
+    lda (current_file),y
+    sta syscall_dos_time+2
+    ldy #fatfs_filedata::mdate
+    lda (current_file),y
+    sta syscall_dos_time+3
+    iny
+    lda (current_file),y
+    sta syscall_dos_time+4
+    jsr dos_to_unix_time
+    ldx #.sizeof(timeval)
+    @copy_2:
+        lda syscall_unix_time-1,x
+        sta scratch_area+kernel_stat::st_mtim-1,x
+    dex
+    bne @copy_2
+
+    ; File or directory?
+    ldy #fatfs_filedata::attributes
+    lda (current_file),y
+    and #ATTR_DIRECTORY
+    beq @regular_file
+
+        ; directory
+        lda #<%100000111111111 ; Directory, read, write, execute
+        sta scratch_area+kernel_stat::st_mode+0
+        lda #>%100000111111111
+        sta scratch_area+kernel_stat::st_mode+1
+
+        ; Set two links for directory: one for the directory and one
+        ; for its . entry
+        ; There really should be another for the .. from each subdirectory,
+        ; but that adds complexity
+        lda #2
+        sta scratch_area+kernel_stat::st_nlink+0
+
+        ; Size is unknown
+        ldy #fatfs_filedata::size
+        lda #0
+        sta scratch_area+kernel_stat::st_size+0
+        sta scratch_area+kernel_stat::st_size+1
+        sta scratch_area+kernel_stat::st_size+2
+        sta scratch_area+kernel_stat::st_size+3
+
+        bne @end
+
+    @regular_file:
+
+        ; regular file
+        ldx #%11111111      ; read, write, execute
+        lda (current_file),y
+        and #ATTR_READONLY
+        beq @writable
+            ldx #%01101101  ; read, execute
+        @writable:
+        stx scratch_area+kernel_stat::st_mode+0
+        lda #1              ; The world-readable bit
+        sta scratch_area+kernel_stat::st_mode+1
+
+        ; Only one link
+        lda #1
+        sta scratch_area+kernel_stat::st_nlink+0
+
+        ; File size
+        ldy #fatfs_filedata::size
+        lda (current_file),y
+        sta scratch_area+kernel_stat::st_size+0
+        iny
+        lda (current_file),y
+        sta scratch_area+kernel_stat::st_size+1
+        iny
+        lda (current_file),y
+        sta scratch_area+kernel_stat::st_size+2
+        iny
+        lda (current_file),y
+        sta scratch_area+kernel_stat::st_size+3
+
+    @end:
+    rts
+
+.endproc
+
+; Convert DOS to Unix time
+; Accept DOS time in syscall_dos_time
+; Return Unix time in syscall_unix_time
+.proc dos_to_unix_time
+
+    ; Year
+    lda syscall_dos_time+4  ; A = Y6 Y5 Y4 Y3 Y2 Y1 Y0 M3
+    lsr a                   ; A =  0 Y6 Y5 Y4 Y3 Y2 Y1 Y0
+    clc
+    adc #<1980
+    sta syscall_dos_year+0
+    lda #0
+    adc #>1980
+    sta syscall_dos_year+1
+
+    ; Month
+    lda syscall_dos_time+4  ; A = Y6 Y5 Y4 Y3 Y2 Y1 Y0 M3
+    lsr a                   ; C = M3
+    lda syscall_dos_time+3  ; A = M2 M1 M0 D4 D3 D2 D1 D0
+    ror a                   ; A = M3 M2 M1 M0 D4 D3 D2 D1
+    tax                     ; X = M3 M2 M1 M0 D4 D3 D2 D1
+    lda rshift4,x           ; A =  0  0  0  0 M3 M2 M1 M0
+    sta syscall_dos_month
+
+    ; Day
+    lda syscall_dos_time+3  ; A = M2 M1 M0 D4 D3 D2 D1 D0
+    and #$1F                ; A =  0  0  0 D4 D3 D2 D1 D0
+    sta syscall_dos_day
+
+    ; Hour
+    ldx syscall_dos_time+2  ; X = h4 h3 h2 h1 h0 m5 m4 m3
+    lda rshift3,x           ; A =  0  0  0 h4 h3 h2 h1 h0
+    sta syscall_dos_hour
+
+    ; Minute
+    ldx syscall_dos_time+2  ; A = h4 h3 h2 h1 h0 m5 m4 m3
+    ldy syscall_dos_time+1  ; Y = m2 m1 m0 s5 s4 s3 s2 s1
+    lda lshift3,x           ; A = h1 h0 m5 m4 m3  0  0  0
+    ora rshift5,y           ; A = h1 h0 m5 m4 m3 m2 m1 m0
+    and #$3F                ; A =  0  0 m5 m4 m3 m2 m1 m0
+    sta syscall_dos_minute
+
+    ; Second
+    lda syscall_dos_time+1  ; A = m2 m1 m0 s5 s4 s3 s2 s1
+    and #$1F                ; A =  0  0  0 s5 s4 s3 s2 s1
+    ldx syscall_dos_time+0  ; X = hundredths of seconds
+    cpx #100                ; C = s0
+    rol a                   ; A =  0  0 s5 s4 s3 s2 s1 s0
+    sta syscall_dos_second
+
+    jmp component_to_unix_time
+
+.endproc
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;                               Kernal calls                               ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -856,8 +1332,8 @@ error:
         rts
     :
         ; Return failure
+        sec
         eor #$FF
-        clc
         adc #0
         sta RISCV_ireg_0+REG_a0
         lda #$FF
@@ -1949,3 +2425,25 @@ ten:
     jmp RISCV_exit_entry
 
 .endproc
+
+.if 0
+;;;;
+print_hex:
+    pha
+    lsr a
+    lsr a
+    lsr a
+    lsr a
+    tax
+    lda hexdigit,x
+    jsr CHROUT
+    pla
+    and #$0F
+    tax
+    lda hexdigit,x
+    jsr CHROUT
+    rts
+
+hexdigit: .byte "0123456789ABCDEF"
+;;;;
+.endif

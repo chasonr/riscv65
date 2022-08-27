@@ -10,3 +10,4 @@ jmp fatfs_search
 jmp fatfs_seek
 jmp fatfs_read_mem
 jmp fatfs_read
+jmp fatfs_get_current_dir
